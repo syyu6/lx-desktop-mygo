@@ -2,14 +2,17 @@ package player
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/audio"
 
 	"netease-music-mygo/internal/lyrics"
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -20,6 +23,12 @@ const (
 	RepeatAll
 	RepeatOne
 )
+
+// songURL asks NetEase where a track streams from; tests replace it.
+var songURL = netease.SongURL
+
+// lyricsOf asks NetEase for a track's lyrics; tests replace it.
+var lyricsOf = netease.Lyrics
 
 // Player plays a queue of tracks. Its methods run on the main thread;
 // loading happens on goroutines, whose results post brings back there.
@@ -32,9 +41,36 @@ type Player struct {
 	Normalize func() bool
 	// Cache keeps the songs played, if set.
 	Cache *Cache
+	// Resolve returns where a track streams from at level, and the id of
+	// the source that serves it: the app tries the sources in the
+	// listener's order, its own first and then the others, which may have
+	// the song the first will not stream.
+	Resolve func(t netease.Track, level string) (*netease.Stream, string, error)
+	// ResolveExcept is Resolve, also returning the id of the link that gave
+	// the address and leaving out the link skip names. The app sets it: a
+	// source may name an address and then fail to serve it — an imported
+	// script whose upstream is down answers with a URL that is a 404 — and
+	// the next link that has the song must get its turn rather than the
+	// song failing outright.
+	ResolveExcept func(t netease.Track, level, skip string) (*netease.Stream, string, string, error)
+	// ResolveLyrics returns a track's lyrics, from whichever source has
+	// them.
+	ResolveLyrics func(t netease.Track) (lrc, translation string, ok bool)
+	// ResolveLyricsElsewhere is ResolveLyrics for the sources other than
+	// the song's own: what is asked once its own has answered with none,
+	// rather than asking it the same thing twice.
+	ResolveLyricsElsewhere func(t netease.Track) (lrc, translation string, ok bool)
+	// ResolveCover returns a track's cover, from whichever source knows
+	// it.
+	ResolveCover func(t netease.Track) (url string, ok bool)
 	// Changed, if set, hears that what plays, where it is or whether it
 	// plays changed.
 	Changed func()
+	// Prefetch, when it returns true, fetches the next track's song while
+	// the one playing plays: the network is idle between the two, and a
+	// song still waiting for its first bytes when it takes over starts
+	// late. The song is kept waiting, not played, until its turn.
+	Prefetch func() bool
 
 	queue   []netease.Track
 	order   []int // the queue's indices in play order: shuffled or not
@@ -52,6 +88,7 @@ type Player struct {
 	awaiting bool // at the queue's end, for what the feed gives
 
 	track   *netease.Track
+	served  string // the id of the source the track streams from
 	out     *audio.Player
 	stream  stream
 	info    *netease.Stream // what the current track streams
@@ -61,6 +98,11 @@ type Player struct {
 	playing bool // what the listener wants: false while paused
 	err     string
 	gen     int // counts loads, to drop the results of stale ones
+
+	// ahead is the next track's song, fetching while the one playing
+	// plays, and kept for its turn: see startAhead. Only the main thread
+	// makes or takes one.
+	ahead *aheadTrack
 
 	lyrics       []lyrics.Line
 	lyricsLoaded bool
@@ -272,13 +314,13 @@ func (p *Player) awaitFeed() {
 
 // appendTracks adds tracks to the end of the queue, but those in it.
 func (p *Player) appendTracks(tracks []netease.Track) {
-	in := make(map[int64]bool, len(p.queue))
+	in := make(map[string]bool, len(p.queue))
 	for _, t := range p.queue {
-		in[t.ID] = true
+		in[t.Ident()] = true
 	}
 	for _, t := range tracks {
-		if !in[t.ID] {
-			in[t.ID] = true
+		if !in[t.Ident()] {
+			in[t.Ident()] = true
 			p.order = append(p.order, len(p.queue))
 			p.queue = append(p.queue, t)
 		}
@@ -558,6 +600,7 @@ func (p *Player) Levels() ([Bands]float32, bool) {
 }
 
 func (p *Player) stop() {
+	p.dropAhead()
 	if out := p.out; out != nil {
 		// Paused first, it fades out over a few milliseconds, rather than
 		// stopping with a click.
@@ -569,6 +612,57 @@ func (p *Player) stop() {
 	p.fade.attach(nil, 1)
 }
 
+// fetchLyrics returns a track's lyrics: NetEase's, where the track is
+// NetEase's and it has them, and else whichever source has them, so that a
+// song the app found on another source shows its words — and so does a
+// NetEase song NetEase has no words for, an instrumental's, which the
+// other services often have words for all the same.
+func (p *Player) fetchLyrics(t netease.Track) (lrc, trans, yrc string, err error) {
+	if t.Src() == music.SourceNetease {
+		lrc, trans, yrc, err = lyricsOf(t.ID)
+		if err == nil && strings.TrimSpace(lrc) != "" {
+			return lrc, trans, yrc, nil
+		}
+		// NetEase answered with none: the other sources are asked for the
+		// song as they have it, before the song is called an instrumental.
+		if p.ResolveLyricsElsewhere != nil {
+			if l, tr, ok := p.ResolveLyricsElsewhere(t); ok {
+				return l, tr, "", nil
+			}
+		}
+	} else if p.ResolveLyrics != nil {
+		// A song of another source knows its words by its own numbering.
+		if l, tr, ok := p.ResolveLyrics(t); ok {
+			return l, tr, "", nil
+		}
+	}
+	if lrc == "" && err == nil {
+		err = errors.New("player: no lyrics")
+	}
+	return lrc, trans, yrc, err
+}
+
+// fetchCover returns a track's cover as an image: NetEase's own, where the
+// track is NetEase's and it has one, and else whichever source names one.
+func (p *Player) fetchCover(t netease.Track) ([]byte, error) {
+	if t.Src() == music.SourceNetease {
+		if cover, err := netease.Fetch(netease.Sized(t.Album.PicURL, 600)); err == nil {
+			return cover, nil
+		}
+	}
+	if p.ResolveCover != nil {
+		if url, ok := p.ResolveCover(t); ok {
+			if b, err := netease.Fetch(url); err == nil {
+				return b, nil
+			}
+		}
+	}
+	if pic := t.Cover(); pic != "" {
+		return netease.Fetch(pic)
+	}
+	return nil, errors.New("player: no cover")
+}
+
 // load plays the track at order[at], skipping those that cannot play.
 func (p *Player) load(at int) {
 	p.loadSkipping(at, 0, true, 0)
@@ -577,12 +671,21 @@ func (p *Player) load(at int) {
 // loadSkipping loads the track at order[at], to play or not, from from,
 // skipping those that cannot play: skipped of them so far.
 func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
+	t := p.queue[p.order[at]]
+	level := "exhigh"
+	if p.Quality != nil {
+		level = p.Quality()
+	}
+	// The next song was fetched while the last one played: what it opened
+	// is taken as it is, still waiting, rather than asked for again. One
+	// fetched for any other song goes.
+	ahead := p.takeAhead(t, level)
 	p.stop()
 	p.gen++
 	gen := p.gen
 	p.at = at
-	t := p.queue[p.order[at]]
 	p.track = &t
+	p.served = ""
 	p.loading, p.playing, p.err = true, play, ""
 	p.awaiting = false
 	p.lyrics, p.lyricsLoaded = nil, false
@@ -591,7 +694,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.refill()
 
 	go func() {
-		cover, err := netease.Fetch(netease.Sized(t.Album.PicURL, 600))
+		cover, err := p.fetchCover(t)
 		if err == nil {
 			p.post(func() {
 				if gen == p.gen {
@@ -602,7 +705,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	}()
 
 	go func() {
-		lrc, trans, yrc, err := netease.Lyrics(t.ID)
+		lrc, trans, yrc, err := p.fetchLyrics(t)
 		var lines []lyrics.Line
 		if err == nil {
 			lines = lyrics.Build(lrc, trans, yrc)
@@ -615,11 +718,20 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 		})
 	}()
 	go func() {
-		level := "exhigh"
-		if p.Quality != nil {
-			level = p.Quality()
+		var info *netease.Stream
+		var s stream
+		var served string
+		var err error
+		if ahead == nil {
+			info, s, served, err = p.open(t, level, false)
+		} else if got, ok := ahead.wait(); ok {
+			info, s, served, err = got.info, got.s, got.served, got.err
+		} else {
+			// Still fetching: what it opens is let go, and the song asked
+			// for now, which waits for the sources as it would have.
+			ahead.abandon()
+			info, s, served, err = p.open(t, level, false)
 		}
-		info, s, err := p.open(t, level)
 		p.post(func() {
 			if gen != p.gen {
 				if s != nil {
@@ -631,11 +743,15 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			if err != nil {
 				p.err = err.Error()
 				switch {
-				case err != netease.ErrUnavailable:
+				case errors.Is(err, ErrUnsupportedFormat), errors.Is(err, ErrNotAudio):
+					// What a source gave is not a song the player can play,
+					// and says why: keep its words.
 				case t.ProgramID != 0:
 					p.err = "这期节目需要购买才能收听"
-				default:
-					p.err = "这首歌需要 VIP 才能播放"
+				case t.VIP():
+					// Its own source wanted a subscription, and the others
+					// were tried for it: say so, as Music does.
+					p.err = "这首歌需要 VIP，其它来源也没有找到"
 				}
 				// Skip what cannot play, unless nothing in the queue can.
 				if skipped+1 < len(p.order) {
@@ -650,7 +766,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 				}
 				return
 			}
-			p.stream, p.info = s, info
+			p.stream, p.info, p.served = s, info, served
 			p.gain = normGain(info)
 			p.out = audio.NewPlayer(s)
 			// From its middle, as a session picked up again, it fades in.
@@ -675,6 +791,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 				p.out.Play()
 				p.fade.fade(1, fadeIn, nil)
 			}
+			p.startAhead()
 			p.sync()
 		})
 	}()
@@ -682,22 +799,110 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 
 // open opens track t's audio at level: kept in the cache, or else
 // streamed into it, and kept once it has all come in.
-func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, error) {
-	dl, info, ok := p.Cache.lookup(t.ID, level)
-	if !ok {
-		var err error
-		info, err = netease.SongURL(t.ID, level)
-		if err != nil {
-			return nil, nil, err
+//
+// A song streams from its own source where that source will, and else from
+// another that has it: what the app's Resolve does, which tries the
+// sources in the listener's order and looks the song up on the others
+// when its own will not stream it.
+//
+// A link that names an address which does not open gives way to the next:
+// a script whose upstream is down answers with a URL that is a 404, and
+// that is its own failing, not the song's. Only the links that come back
+// saying they have no address at all end the song's chances, as they did
+// before.
+func (p *Player) open(t netease.Track, level string, ahead bool) (*netease.Stream, stream, string, error) {
+	// The cache names a song by its source and its id there, so that two
+	// sources' songs of one number stay apart.
+	if t.Src() == music.SourceNetease {
+		if f, info, ok := p.Cache.lookup(t.ID, level); ok {
+			s, err := openStream(f, t.Duration)
+			if err == nil {
+				// What the cache keeps is the song's own, from its own
+				// source.
+				return info, s, music.SourceNetease, nil
+			}
+			f.Close()
 		}
-		dl = p.Cache.download(t.ID, info)
 	}
-	s, err := openStream(dl, t.Duration)
-	if err != nil {
+	// skip is the link whose address did not open: the next try leaves it
+	// out. It stays "" until one fails, so the common case is one look.
+	var skip string
+	var firstErr error
+	for {
+		info, served, link, err := p.resolveLink(t, level, skip)
+		if err != nil {
+			if firstErr != nil {
+				// A source named an address that was no song, and no other
+				// source has it: say both, as only the pair explains it.
+				return nil, nil, "", fmt.Errorf("音源给出的地址无法播放（%v），其它来源也没有这首歌", firstErr)
+			}
+			return nil, nil, "", err
+		}
+		// What a source other than the song's own gives is not kept: the
+		// cache's name is the song's own, and a stream found elsewhere may
+		// be a different recording.
+		var dl *download
+		switch {
+		case served == music.SourceNetease:
+			dl = p.Cache.download(t.ID, info)
+		case ahead:
+			// Waiting for its turn behind a song that plays: in a file,
+			// not in memory.
+			dl = p.Cache.downloadAhead(info)
+		default:
+			dl = p.Cache.downloadUncached(info)
+		}
+		s, err := openStream(dl, t.Duration)
+		if err == nil {
+			return info, s, served, nil
+		}
 		dl.Close()
-		return nil, nil, err
+		if firstErr == nil {
+			firstErr = err
+		}
+		// The address this link named is no song: ask the next link that
+		// has the song. Without a link to leave out, as in a test with
+		// Resolve alone, there is nothing more to ask.
+		if link == "" || link == skip {
+			return nil, nil, "", firstErr
+		}
+		skip = link
 	}
-	return info, s, nil
+}
+
+// resolveLink asks where the track streams from, leaving out skip, and
+// returns the link that answered.
+func (p *Player) resolveLink(t netease.Track, level, skip string) (*netease.Stream, string, string, error) {
+	if p.ResolveExcept != nil {
+		return p.ResolveExcept(t, level, skip)
+	}
+	info, served, err := p.resolve(t, level)
+	return info, served, "", err
+}
+
+// resolve asks Resolution where the track streams from. Without one, as in
+// a test, NetEase answers for its own songs, and a song of another source
+// is not played.
+func (p *Player) resolve(t netease.Track, level string) (*netease.Stream, string, error) {
+	if p.Resolve != nil {
+		return p.Resolve(t, level)
+	}
+	if t.Src() != music.SourceNetease {
+		return nil, "", ErrUnavailableFrom(t.Src())
+	}
+	info, err := songURL(t.ID, level)
+	return info, music.SourceNetease, err
+}
+
+// Served returns the id of the source the track playing streams from, or
+// "" before one plays: its own source, or the one the app found it on.
+func (p *Player) Served() string { return p.served }
+
+// ErrUnavailableFrom is returned for a song of a source the app has no
+// provider for, and no script to ask: its source is turned off, or its
+// provider is not built in.
+func ErrUnavailableFrom(src string) error {
+	return fmt.Errorf("这个来源（%s）没有提供这首歌", src)
 }
 
 // Session is where playback was left, to pick up again.

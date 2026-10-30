@@ -26,7 +26,10 @@ type settings struct {
 	// Quality is the level of the streams: standard, higher, exhigh,
 	// lossless or hires.
 	Quality string `json:"quality"`
-	// Appearance is light, dark, or system to follow the system.
+	// Appearance is light, dark, system to follow the system, or cover to
+	// follow the player: light or dark as the system is, with the accent
+	// taken from the playing song's cover, so that the app is tinted by the
+	// music.
 	Appearance string `json:"appearance"`
 	// Smoke makes the progress bars comets trailing smoke as music plays,
 	// for a few percent of a core: the listener turns it on.
@@ -45,6 +48,10 @@ type settings struct {
 	// Normalize evens out the loudness of tracks, by what NetEase
 	// measured of each.
 	Normalize bool `json:"normalize"`
+	// Prefetch fetches the next song while the one playing plays, so that
+	// it starts as the last one ends rather than after asking the sources
+	// for it: the listener turns it off to save data.
+	Prefetch bool `json:"prefetch"`
 	// HotComments shows a song's hot comments in its quiet parts, in
 	// place of the lyrics (quietComment): the listener turns it on.
 	HotComments bool `json:"hotComments"`
@@ -63,12 +70,72 @@ type settings struct {
 	CacheMB int `json:"cacheMB"`
 	// SearchHistory keeps submitted keywords, most recent first.
 	SearchHistory []string `json:"searchHistory,omitempty"`
+	// ScriptOrder names the imported source scripts, the first to be asked
+	// first (lx.go).
+	ScriptOrder []string `json:"scriptOrder,omitempty"`
+	// SourceOrder names every source the app has, the built-in services and
+	// the scripts, in the order the app tries them: the first that has
+	// what is asked of it answers (chain.go). The scripts are asked before
+	// the built-in ones, whatever this says (chain.go).
+	SourceOrder []string `json:"sourceOrder,omitempty"`
+	// LibrariesOff names the sources whose catalogue the listener turned
+	// off: a source so turned off is not searched, and its own pages are
+	// not shown. Its songs still play from it (SourcesOff), as its words
+	// are still asked of it (LyricsOff).
+	LibrariesOff []string `json:"librariesOff,omitempty"`
+	// SourcesOff names the sources whose songs the listener turned off: a
+	// source so turned off is not tried to play a song, though its
+	// catalogue is still searched (sources.go). A song still plays from one
+	// while it is queued.
+	SourcesOff []string `json:"sourcesOff,omitempty"`
+	// LyricsOff names the sources not asked for a song's words, and
+	// CommentsOff the sources not asked for its remarks: each capability
+	// has its own switch, so that a source kept for its songs alone is not
+	// asked for words.
+	LyricsOff   []string `json:"lyricsOff,omitempty"`
+	CommentsOff []string `json:"commentsOff,omitempty"`
+	// SearchOff named the catalogues the listener did not search, before
+	// a source's songs were one switch: it is read once, for those it kept
+	// off (migrateSettings).
+	SearchOff []string `json:"searchOff,omitempty"`
+	// CoverTint is the color the last song played gave the window while the
+	// appearance followed it, and CoverTintCover the cover it was taken
+	// from. They are kept so that the window opens in that song's colors,
+	// rather than in the system's until its cover has loaded.
+	CoverTint      string `json:"coverTint,omitempty"`
+	CoverTintCover string `json:"coverTintCover,omitempty"`
+	// Sidebar is how wide the sidebar shows, which the listener drags its
+	// edge to change, SidebarHidden whether it shows at all, and SidebarRail
+	// whether it shows folded to a rail of icons.
+	Sidebar       float32 `json:"sidebar,omitempty"`
+	SidebarHidden bool    `json:"sidebarHidden,omitempty"`
+	SidebarRail   bool    `json:"sidebarRail,omitempty"`
 
 	path string // where they were loaded from, and are saved to
 }
 
 func defaultSettings() settings {
-	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
+	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, Prefetch: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
+}
+
+// migrate folds the settings an older version kept into the shape this one
+// reads: a source's search switch and its music switch were two, and are
+// one now, a source turned off for either being off for its songs.
+func (s *settings) migrate() {
+	if len(s.SearchOff) == 0 {
+		return
+	}
+	off := map[string]bool{}
+	for _, id := range s.SourcesOff {
+		off[id] = true
+	}
+	for _, id := range s.SearchOff {
+		if !off[id] {
+			off[id] = true
+			s.SourcesOff = append(s.SourcesOff, id)
+		}
+	}
+	s.SearchOff = nil
 }
 
 func settingsPath() (string, error) {
@@ -122,6 +189,7 @@ func loadSettings() settings {
 	if path, err := settingsPath(); err == nil {
 		if b, err := os.ReadFile(path); err == nil {
 			json.Unmarshal(b, &s)
+			s.migrate()
 		}
 		s.path = path
 	}
@@ -145,13 +213,18 @@ func (s settings) save() error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-// applyAppearance makes the windows light, dark, or follow the system.
+// applyAppearance makes the windows light, dark, or follow the system, and,
+// following the player, tints them by what plays.
 func (s settings) applyAppearance() {
 	switch s.Appearance {
 	case "light":
 		mygo.Theme.SetSource(mygo.ThemeLight)
 	case "dark":
 		mygo.Theme.SetSource(mygo.ThemeDark)
+	case "cover":
+		// The accents come from the cover, which the frames draw; the window
+		// itself follows the system, as its bars and menus are not the app's.
+		mygo.Theme.SetSource(mygo.ThemeSystem)
 	default:
 		mygo.Theme.SetSource(mygo.ThemeSystem)
 	}

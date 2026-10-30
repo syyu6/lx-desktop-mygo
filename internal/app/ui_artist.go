@@ -7,16 +7,21 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
 // artistLinks shows a track's artists as its credits read, each a link to
 // their page in color, brightening to hover under the pointer, and then,
 // with album, a link to its album. An artist NetEase has no page for,
-// credited by name alone, is plain text. An episode's host and podcast,
+// credited by name alone or by another source, is plain text. An episode's host and podcast,
 // in its artists' and album's place, link to the podcast's page.
 func (a *app) artistLinks(c *ui.Context, tr *netease.Track, color, hover ui.Color, album ...bool) ui.Element {
 	podcast := route{page: pagePodcast, id: tr.PodcastID}
+	// Artists' and albums' pages are NetEase's: the other services have
+	// none, as lx-music-desktop's do not either, so their names open a
+	// search of them on their own source, which is the page they have.
+	netease := tr.Src() == music.SourceNetease
 	return ui.RichText(c).TextColor(color).Children(func() {
 		for i, ar := range tr.Artists {
 			if i > 0 {
@@ -25,8 +30,10 @@ func (a *app) artistLinks(c *ui.Context, tr *netease.Track, color, hover ui.Colo
 			switch {
 			case tr.PodcastID != 0:
 				a.link(c.Key(i), ar.Name, color, hover, podcast)
-			case ar.ID != 0:
+			case ar.ID != 0 && netease:
 				a.link(c.Key(i), ar.Name, color, hover, route{page: pageArtist, id: ar.ID})
+			case ar.Name != "" && !netease:
+				a.link(c.Key(i), ar.Name, color, hover, searchRouteOn(tr.Src(), ar.Name))
 			default:
 				ui.Text(c, ar.Name)
 			}
@@ -36,13 +43,22 @@ func (a *app) artistLinks(c *ui.Context, tr *netease.Track, color, hover ui.Colo
 			switch {
 			case tr.PodcastID != 0:
 				a.link(c.Key("album"), tr.Album.Name, color, hover, podcast)
-			case tr.Album.ID != 0:
+			case tr.Album.ID != 0 && netease:
 				a.link(c.Key("album"), tr.Album.Name, color, hover, route{page: pageAlbum, id: tr.Album.ID})
+			case !netease:
+				a.link(c.Key("album"), tr.Album.Name, color, hover, searchRouteOn(tr.Src(), tr.Album.Name))
 			default:
 				ui.Text(c, tr.Album.Name)
 			}
 		}
 	})
+}
+
+// searchRouteOn is the page of a search of q on one source alone: what an
+// artist or an album of a source with no pages of its own opens, which
+// finds everything that source has of them.
+func searchRouteOn(src, q string) route {
+	return route{page: pageSearch, query: q, kind: netease.SearchSongs, only: src}
 }
 
 // link is text in a RichText that opens a page.

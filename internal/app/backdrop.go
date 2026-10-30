@@ -112,74 +112,116 @@ type backdropCache struct {
 	canvas *ui.Canvas
 	before *ui.Canvas // the song before's, fading out over it
 	fadeAt time.Time  // when it began to
-	art    *artwork
-	tint   ui.Color
-	fog    bool
-	at     time.Time // when it was painted
-	drift  float64   // the clouds' time, in seconds, which stops on pause
-	speed  float64   // how fast drift goes: 1 playing, 0 paused
-	level  barState
-	last   time.Time
+	// from and fromArt are the colors the backdrop is coming from, as
+	// another song's: the canvas is painted in the colors of the song
+	// before eased into the playing one's, and the picture with it.
+	from    ui.Color
+	fromArt *artwork
+	art     *artwork
+	tint    ui.Color
+	fog     bool
+	at      time.Time // when it was painted
+	drift   float64   // the clouds' time, in seconds, which stops on pause
+	speed   float64   // how fast drift goes: 1 playing, 0 paused
+	level   barState
+	last    time.Time
 }
 
 // backdrop paints the backdrop behind Now Playing, still or fog.
 func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color) {
-	pl := a.pl
-	fog, still := a.settings.Fog, c.Preferences().ReduceMotion
+	still := c.Preferences().ReduceMotion
 	ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
-		// The CPU, drawing the fog for want of a GPU, paints far fewer
-		// pixels, and those once a song: the fog stays still.
-		gpu := p.Accelerated()
-		div := float32(8)
-		if fog && gpu {
-			div = 2
-		}
-		cw, ch := int(r.W/div)+1, int(r.H/div)+1
-		bd := &a.backdropCache
-		if bd.canvas != nil {
-			if w, h := bd.canvas.Size(); w != cw || h != ch {
-				bd.canvas, bd.before = nil, nil
-			}
-		}
-		now := p.Now()
-		if bd.canvas != nil && (bd.art != art || bd.tint != tint) {
-			// Another song: the last one's stays as it was, fading out.
-			bd.canvas, bd.before, bd.fadeAt = bd.before, bd.canvas, now
-		}
-		moving := fog && gpu && !still
-		lv, live := pl.Levels()
-		moved := bd.step(now, pl.Playing() && moving, lv, live && moving)
-		due := now.Sub(bd.at) >= backdropFrame-2*time.Millisecond
-		if bd.canvas == nil || bd.art != art || bd.tint != tint || bd.fog != fog || moved && due {
-			if bd.canvas == nil {
-				bd.canvas = ui.NewCanvas(cw, ch)
-			}
-			bd.art, bd.tint, bd.fog, bd.at = art, tint, fog, now
-			bass := bd.level.group(0, 6)
-			bd.canvas.Draw(p, func(cp *ui.Painter) {
-				box := ui.Rect{W: float32(cw), H: float32(ch)}
-				if fog {
-					drawFog(cp, box, tint, float32(bd.drift), bass)
-				} else {
-					drawBackdrop(cp, box, art, tint)
-				}
-			})
-		}
-		p.Image(bd.canvas.Bitmap(), r, ui.FillBox)
-		if bd.before != nil {
-			if k := float32(now.Sub(bd.fadeAt)) / float32(backdropFade); k < 1 {
-				// Eased out, as it fades.
-				k = 1 - (1-k)*(1-k)*(1-k)
-				p.ImageRegion(bd.before.Bitmap(), ui.Rect{}, r, ui.ImageOptions{Tint: white.Alpha(1 - k)})
-				p.AnimationFrame()
-			} else {
-				bd.before = nil
-			}
-		}
-		if moved {
-			p.After(backdropFrame)
-		}
+		a.paintBackdrop(p, r, &a.backdropCache, art, tint, still, true)
 	})
+}
+
+// paintBackdrop paints bd into r: the playing song's colors behind art,
+// tinted by tint, still or as fog. fogAllowed is off for the backdrop
+// behind the pages, which is there to be read over, and which costs what a
+// still picture costs rather than a shader thirty times a second.
+func (a *app) paintBackdrop(p *ui.Painter, r ui.Rect, bd *backdropCache, art *artwork, tint ui.Color, still, fogAllowed bool) {
+	pl := a.pl
+	fog := fogAllowed && a.settings.Fog
+	// The CPU, drawing the fog for want of a GPU, paints far fewer
+	// pixels, and those once a song: the fog stays still.
+	gpu := p.Accelerated()
+	div := float32(8)
+	if fog && gpu {
+		div = 2
+	}
+	cw, ch := int(r.W/div)+1, int(r.H/div)+1
+	if bd.canvas != nil {
+		if w, h := bd.canvas.Size(); w != cw || h != ch {
+			bd.canvas, bd.before = nil, nil
+		}
+	}
+	now := p.Now()
+	if bd.canvas != nil && (bd.art != art || bd.tint != tint) {
+		// Another song: the last one's stays as it was, fading out, and
+		// the new one is painted coming from its colors, so that the two
+		// show at once only as long as it takes to ease from one to the
+		// other.
+		bd.canvas, bd.before, bd.fadeAt = bd.before, bd.canvas, now
+		bd.from, bd.fromArt = bd.tint, bd.art
+	}
+	moving := fog && gpu && !still
+	lv, live := pl.Levels()
+	moved := bd.step(now, pl.Playing() && moving, lv, live && moving)
+	due := now.Sub(bd.at) >= backdropFrame-2*time.Millisecond
+	// How far the backdrop has gone from the song before's colors to this
+	// one's; still 1 once it has.
+	settle := float32(0)
+	if bd.from.A != 0 {
+		if k := float32(now.Sub(bd.fadeAt)) / float32(backdropFade); k < 1 {
+			settle = k
+		} else {
+			bd.from, bd.fromArt = ui.Color{}, nil
+			settle = 1
+		}
+	}
+	changing := settle > 0 && settle < 1
+	if bd.canvas == nil || bd.art != art || bd.tint != tint || bd.fog != fog || changing || moved && due {
+		if bd.canvas == nil {
+			bd.canvas = ui.NewCanvas(cw, ch)
+		}
+		bd.art, bd.tint, bd.fog, bd.at = art, tint, fog, now
+		shownTint, shownArt := tint, art
+		if changing {
+			// The colors are the song before's eased into this one's, the
+			// picture drawn from whichever it is nearer.
+			k := settle * settle * (3 - 2*settle)
+			shownTint = bd.from.Mix(tint, k)
+			if k < 0.5 && bd.fromArt != nil {
+				shownArt = bd.fromArt
+			}
+		}
+		bass := bd.level.group(0, 6)
+		bd.canvas.Draw(p, func(cp *ui.Painter) {
+			box := ui.Rect{W: float32(cw), H: float32(ch)}
+			if fog {
+				drawFog(cp, box, shownTint, float32(bd.drift), bass)
+			} else {
+				drawBackdrop(cp, box, shownArt, shownTint)
+			}
+		})
+	}
+	p.Image(bd.canvas.Bitmap(), r, ui.FillBox)
+	if bd.before != nil {
+		if k := float32(now.Sub(bd.fadeAt)) / float32(backdropFade); k < 1 {
+			// Eased out, as it fades.
+			k = 1 - (1-k)*(1-k)*(1-k)
+			p.ImageRegion(bd.before.Bitmap(), ui.Rect{}, r, ui.ImageOptions{Tint: white.Alpha(1 - k)})
+			p.AnimationFrame()
+		} else {
+			bd.before = nil
+		}
+	}
+	if changing {
+		p.AnimationFrame()
+	}
+	if moved {
+		p.After(backdropFrame)
+	}
 }
 
 // step moves the drift and the pulse on to now, and reports whether

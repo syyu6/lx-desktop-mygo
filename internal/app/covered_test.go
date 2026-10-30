@@ -19,7 +19,7 @@ func TestCoveredPageKeepsItsPlace(t *testing.T) {
 	for i := range tracks {
 		tracks[i] = netease.Track{ID: int64(i + 1), Name: fmt.Sprintf("曲目%d", i+1)}
 	}
-	a.playlists[42] = &netease.Playlist{ID: 42, Name: "飙升榜", Tracks: tracks}
+	a.playlists[playlistKey("", 42)] = &netease.Playlist{ID: 42, Name: "飙升榜", Tracks: tracks}
 	for i := range 40 {
 		a.charts = append(a.charts, netease.Playlist{ID: int64(100 + i), Name: fmt.Sprintf("榜单%d", i+1)})
 	}

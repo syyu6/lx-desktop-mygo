@@ -6,6 +6,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -29,6 +30,9 @@ type commentState struct {
 	loading bool
 	err     string
 	scroll  ui.ScrollState
+	// finding is set while a song of another source is looked up on
+	// NetEase, for its thread.
+	finding bool
 }
 
 // commentPage is how many comments a page loads.
@@ -37,11 +41,51 @@ const commentPage = 30
 // commentsFor makes the comments those of tr, loading their first page
 // once it changed: Now Playing does it as it shows, for the count on the
 // pane's tab.
+//
+// Comments are NetEase's. A song of another source is shown with NetEase's
+// record of it, found by its name and artists, so that a song played from
+// QQ Music or Kuwo has a thread rather than none: the same song's remarks,
+// which is what the listener wants to read.
 func (a *app) commentsFor(tr *netease.Track) *commentState {
 	cs := &a.comments
-	if cs.track != tr.ID {
-		*cs = commentState{track: tr.ID, thread: tr.Thread()}
-		a.loadComments()
+	key := int64(-1) // no song whose comments they are
+	if tr.Src() == music.SourceNetease || tr.ProgramID != 0 {
+		key = tr.ID
+	} else if tr.ID != 0 {
+		// Another source's song: its own id numbers nothing NetEase knows,
+		// and the key is its own name, so that the comments are loaded for
+		// the song and not for an id it shares with another source's.
+		key = -tr.ID
+	}
+	if cs.track == key {
+		return cs
+	}
+	*cs = commentState{track: key}
+	switch {
+	case tr.Src() == music.SourceNetease || tr.ProgramID != 0:
+		cs.thread = netease.Thread(tr)
+		if cs.thread != "" {
+			a.loadComments()
+		}
+	case a.chain != nil:
+		// Found on NetEase in the background: a search, which must not
+		// hold up the frame.
+		cs.finding = true
+		want := *tr
+		go func() {
+			found, ok := a.chain.FindOnNetease(want)
+			a.post(func() {
+				if cs.track != key {
+					return
+				}
+				cs.finding = false
+				if !ok || found.ID == 0 {
+					return
+				}
+				cs.thread = netease.Thread(&found)
+				a.loadComments()
+			})
+		}()
 	}
 	return cs
 }
@@ -49,7 +93,7 @@ func (a *app) commentsFor(tr *netease.Track) *commentState {
 // loadComments loads the next page of comments.
 func (a *app) loadComments() {
 	cs := &a.comments
-	if cs.loading {
+	if cs.loading || cs.thread == "" {
 		return
 	}
 	thread, offset := cs.thread, len(cs.latest)
@@ -173,6 +217,24 @@ type commentKey struct {
 // which load on as they scroll into view.
 func (a *app) commentsPane(c *ui.Context, tr *netease.Track) {
 	cs := a.commentsFor(tr)
+	if cs.thread == "" {
+		if cs.finding {
+			// Being found on NetEase, by name: the same skeleton a loading
+			// thread shows, as it is a moment either way.
+			ui.Column(c).Grow(1).Padding(4, 8, 0, 0).Gap(2).Children(func() {
+				s := npShimmer(c)
+				s.text(c, 13, 1.3).Width(56).Margin(18, 12, 6, 12)
+				commentSkeleton(c, s, 6)
+			})
+			return
+		}
+		// NetEase does not have this song: no thread to show.
+		ui.Column(c).Grow(1).Center().Gap(14).Children(func() {
+			ui.Icon(c, iconComment).Size(40, 40).TextColor(white.Alpha(0.3))
+			ui.Text(c, "网易云没有这首歌的评论").FontSize(17).FontWeight(600).TextColor(white.Alpha(0.45))
+		})
+		return
+	}
 	if len(cs.hot) == 0 && len(cs.latest) == 0 {
 		if cs.loading || !cs.loaded && cs.err == "" {
 			ui.Column(c).Grow(1).Padding(4, 8, 0, 0).Gap(2).Children(func() {

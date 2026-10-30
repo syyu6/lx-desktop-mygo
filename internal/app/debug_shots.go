@@ -221,6 +221,18 @@ func init() {
 			})
 			shot("1-home", a.win)
 			shot("1-notch-idle", a.notch.win)
+			step(0, func() { a.toggleSidebar() })
+			time.Sleep(time.Second)
+			shot("1-home-no-sidebar", a.win)
+			step(0, func() { a.toggleSidebar() })
+			time.Sleep(time.Second)
+			// The rail: the names and the search gone, the icons large, the
+			// sidebar the page's color.
+			step(0, func() { a.setSidebarRail(true) })
+			time.Sleep(time.Second)
+			shot("1-home-rail", a.win)
+			step(0, func() { a.setSidebarRail(false) })
+			time.Sleep(time.Second)
 			step(0, func() { a.open(route{page: pageCharts}) })
 			time.Sleep(time.Second)
 			shot("2-charts", a.win)
@@ -228,7 +240,7 @@ func init() {
 			time.Sleep(4 * time.Second)
 			shot("3-playlist", a.win)
 			step(0, func() {
-				pl := a.playlists[a.charts[1].ID]
+				pl := a.playlists[playlistKey("", a.charts[1].ID)]
 				a.volume = 0.15
 				a.pl.SetVolume(a.volume)
 				a.pl.PlayQueue(pl.Tracks, firstPlayable(pl.Tracks))

@@ -12,11 +12,16 @@ import (
 	"netease-music-mygo/internal/player"
 )
 
-// dailyArt is the cover of the day's songs: their first cover, blurred,
-// with the date set large over it.
+// dailyArt is the cover of the day's songs — their first cover, blurred,
+// with the date set large over it — or, following the player, the playing
+// song's, so that the page is the window's color and not a color of its
+// own.
 func (a *app) dailyArt(c *ui.Context, now time.Time, size float32) {
 	var art *artwork
-	if len(a.daily) > 0 {
+	switch {
+	case a.pal.immersive:
+		art = a.coverArt
+	case len(a.daily) > 0:
 		art = a.art.get(netease.Sized(a.daily[0].Album.PicURL, 600), true)
 	}
 	radius := size * 0.07
@@ -48,16 +53,17 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 	if len(songs) == 0 {
 		return
 	}
-	w, _ := c.Size()
-	inner := w - sidebarWidth - 2*pagePad
+	inner := a.pageWidth(c) - 2*pagePad
 	still := c.Preferences().ReduceMotion
 	art := a.art.get(netease.Sized(songs[0].Album.PicURL, 600), true)
 	card := ui.ButtonBase(c.Key("daily")).Height(dailyHeight).Radius(dailyRadius).FocusRing(false).Label("每日推荐").TextColor(white)
 	hovered := card.Hovered()
 	ours, playing := a.dailyPlaying()
 
-	// The cover's colors, eased in as it loads.
-	deep, rich, glow := dailyColors(art)
+	// The cover's colors, eased in as it loads — or, following the player,
+	// the playing song's, so that the card is the window's and not a color
+	// of its own.
+	deep, rich, glow := a.dailyColors(art)
 	fade := ui.Animation{Duration: 600 * time.Millisecond}
 	deep, rich, glow = card.AnimateColor("deep", deep, fade), card.AnimateColor("rich", rich, fade), card.AnimateColor("glow", glow, fade)
 	card.Background(deep)
@@ -168,19 +174,29 @@ func (a *app) dailyPlaying() (ours, playing bool) {
 	return true, a.pl.Playing()
 }
 
-// dailyColors returns the card's colors for the day's first cover: a deep
-// and a rich shade of its hue, a little turned, and a bright one to glow,
-// at depths that white reads over whatever the cover. A gray cover, or one
-// still loading, takes NetEase's red.
-func dailyColors(art *artwork) (deep, rich, glow ui.Color) {
+// dailyColors returns the card's colors for a cover of tint: a deep and a
+// rich shade of its hue, a little turned, and a bright one to glow, at
+// depths that white reads over whatever the cover. A gray cover takes
+// NetEase's red.
+func dailyColors(tint ui.Color) (deep, rich, glow ui.Color) {
 	h, s := 356.0, 0.74
-	if art != nil && !art.failed {
-		th, ts, _ := hsv(float64(art.tint.R)/255, float64(art.tint.G)/255, float64(art.tint.B)/255)
-		if ts > 0.15 {
-			h, s = th, min(max(ts*1.2, 0.5), 0.78)
-		}
+	if th, ts, _ := hsv(float64(tint.R)/255, float64(tint.G)/255, float64(tint.B)/255); ts > 0.15 {
+		h, s = th, min(max(ts*1.2, 0.5), 0.78)
 	}
 	return hsvColor(h, s, 0.24), hsvColor(math.Mod(h+16, 360), s*0.9, 0.5), hsvColor(math.Mod(h+32, 360), s*0.55, 1)
+}
+
+// dailyColors returns the card's colors: the day's first cover's, or while
+// the appearance follows the player, the playing song's, which the card
+// takes as the window does.
+func (a *app) dailyColors(art *artwork) (deep, rich, glow ui.Color) {
+	if a.pal.immersive {
+		return dailyColors(a.tint)
+	}
+	if art == nil || art.failed {
+		return dailyColors(ui.Color{})
+	}
+	return dailyColors(art.tint)
 }
 
 // drawDailyBackdrop paints the daily card in r: a gradient of the cover's
@@ -359,7 +375,7 @@ func (a *app) dailyPicks(c *ui.Context, songs []netease.Track, ours bool) {
 				bg = white.Alpha(0.1)
 			}
 			row.Background(row.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
-			current := ours && cur != nil && cur.ID == tr.ID
+			current := ours && cur != nil && cur.Ident() == tr.Ident()
 			row.Children(func() {
 				ui.Box(c).Width(18).Center().Children(func() {
 					if current {

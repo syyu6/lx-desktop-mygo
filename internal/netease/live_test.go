@@ -265,7 +265,7 @@ func TestProgramCommentsLive(t *testing.T) {
 		t.Fatalf("%d episodes, %v", len(programs), err)
 	}
 	tr := programs[0].Track(pod)
-	page, err := ThreadComments(tr.Thread(), 0, 5)
+	page, err := ThreadComments(Thread(&tr), 0, 5)
 	if err != nil || page.Total == 0 || len(page.Latest) == 0 {
 		t.Fatalf("comments %+v, %v", page, err)
 	}

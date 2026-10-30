@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"netease-music-mygo/internal/music"
 )
 
 // The public NetEase Cloud Music API, as the web player calls it, without
@@ -22,43 +24,16 @@ const UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/6
 
 var httpClient = &http.Client{Timeout: 20 * time.Second}
 
-type Artist struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-}
-
-type Album struct {
-	ID     int64  `json:"id"`
-	Name   string `json:"name"`
-	PicURL string `json:"picUrl"`
-}
-
-type Track struct {
-	ID       int64    `json:"id"`
-	Name     string   `json:"name"`
-	Artists  []Artist `json:"ar"`
-	Album    Album    `json:"al"`
-	Duration int64    `json:"dt"` // milliseconds
-	Fee      int      `json:"fee"`
-	Alias    []string `json:"alia"`
-	// Reason says why a daily recommendation was picked.
-	Reason string `json:"reason"`
-	// Privilege is what the listener may do with the track, if known.
-	Privilege *Privilege `json:"privilege"`
-	// A podcast's episode plays as a track of its audio, ID, with the
-	// episode's ProgramID, the PodcastID it is in, and what it is about.
-	ProgramID   int64  `json:"programId,omitempty"`
-	PodcastID   int64  `json:"podcastId,omitempty"`
-	Description string `json:"description,omitempty"`
-}
-
-// Privilege is what NetEase lets the listener signed in, or nobody, do
-// with a track.
-type Privilege struct {
-	ID int64 `json:"id"`
-	St int   `json:"st"` // below 0: taken down
-	Pl int   `json:"pl"` // the best bit rate the listener may play; 0 for none
-}
+// The types are package music's, which the app reads across its sources:
+// these names keep the NetEase code reading as the NetEase API does, and
+// a song built here is one the app may play beside any other source's.
+type (
+	Artist    = music.Artist
+	Album     = music.Album
+	Track     = music.Track
+	Privilege = music.Privilege
+	ChartLine = music.ChartLine
+)
 
 // withPrivileges gives tracks their privileges, matched by ID.
 func withPrivileges(tracks []Track, privileges []Privilege) {
@@ -73,34 +48,12 @@ func withPrivileges(tracks []Track, privileges []Privilege) {
 	}
 }
 
-// ArtistNames joins the track's artists as the credits read.
-func (t *Track) ArtistNames() string {
-	names := make([]string, len(t.Artists))
-	for i, a := range t.Artists {
-		names[i] = a.Name
+// URL is the track's page on the NetEase website. A song of another
+// source has its page where that source has it, which NetEase cannot say.
+func URL(t *Track) string {
+	if t.Src() != music.SourceNetease {
+		return ""
 	}
-	return strings.Join(names, ", ")
-}
-
-// Playable reports whether the listener can play the whole track: as their
-// privilege says, or else as its fee does for anyone, VIP songs (1) and
-// paid albums (4) giving only a preview.
-func (t *Track) Playable() bool {
-	if t.ProgramID > 0 {
-		// An episode's audio has no privilege: whether it streams, as a
-		// paid one bought, is up to its stream.
-		return true
-	}
-	if t.Privilege != nil {
-		return t.Privilege.St >= 0 && t.Privilege.Pl > 0
-	}
-	return t.Fee != 1 && t.Fee != 4
-}
-
-func (t *Track) Length() time.Duration { return time.Duration(t.Duration) * time.Millisecond }
-
-// URL is the track's page on the NetEase website.
-func (t *Track) URL() string {
 	if t.ProgramID > 0 {
 		return apiBase + "/program?id=" + strconv.FormatInt(t.ProgramID, 10)
 	}
@@ -108,49 +61,20 @@ func (t *Track) URL() string {
 }
 
 // Thread names the track's comments, and what NetEase likes it by, for an
-// episode: the episode's, not its audio's.
-func (t *Track) Thread() string {
+// episode: the episode's, not its audio's. A song of another source has
+// no thread here, which is no thread at all.
+func Thread(t *Track) string {
+	if t.Src() != music.SourceNetease {
+		return ""
+	}
 	if t.ProgramID > 0 {
 		return programThread(t.ProgramID)
 	}
 	return "R_SO_4_" + strconv.FormatInt(t.ID, 10)
 }
 
-type Playlist struct {
-	ID          int64   `json:"id"`
-	Name        string  `json:"name"`
-	CoverURL    string  `json:"coverImgUrl"`
-	PicURL      string  `json:"picUrl"`
-	Description string  `json:"description"`
-	PlayCount   float64 `json:"playCount"`
-	TrackCount  int     `json:"trackCount"`
-	UpdateFreq  string  `json:"updateFrequency"`
-	SpecialType int     `json:"specialType"` // 5: the listener's liked songs
-	Privacy     int     `json:"privacy"`     // 10: only its creator sees it
-	Creator     struct {
-		UserID   int64  `json:"userId"`
-		Nickname string `json:"nickname"`
-	} `json:"creator"`
-	Tracks   []Track `json:"tracks"`
-	TrackIDs []struct {
-		ID int64 `json:"id"`
-	} `json:"trackIds"`
-	// Preview holds a chart's top songs, as its card shows them.
-	Preview []ChartLine `json:"-"`
-}
-
-// ChartLine is a song at the top of a chart: its name and its artist.
-type ChartLine struct {
-	First  string `json:"first"`
-	Second string `json:"second"`
-}
-
-func (p *Playlist) Cover() string {
-	if p.CoverURL != "" {
-		return p.CoverURL
-	}
-	return p.PicURL
-}
+// Playlist is a list of songs, a chart, or the songs the listener likes.
+type Playlist = music.Playlist
 
 type apiError struct {
 	Code    int    `json:"code"`
@@ -386,26 +310,16 @@ func ArtistLatestSongs(id int64, limit int) ([]Track, error) {
 
 var ErrUnavailable = errors.New("this song isn't available to stream")
 
-// Stream is where a track streams from, and what it is.
-type Stream struct {
-	URL  string `json:"-"`
-	Size int64  `json:"size"` // in bytes
-	// Type is the format: mp3, or flac for the lossless levels.
-	Type string `json:"type"`
-	// Level is the level served, which may be below the one asked for.
-	Level string `json:"level"`
-	// Gain is how many dB to change the track by to sound as loud as
-	// others, and Peak its loudest sample, 1 at full scale, or 0 if
-	// unknown.
-	Gain float64 `json:"gain"`
-	Peak float64 `json:"peak"`
-}
+// Stream is where a track streams from, and what it is. Levels is the
+// stream levels, from the lowest, and Lossless reports whether a level
+// streams FLAC: they are package music's, which every source's songs
+// stream at.
+type Stream = music.Stream
 
-// Levels are the stream levels, from the lowest.
-var Levels = []string{"standard", "higher", "exhigh", "lossless", "hires"}
+// Levels and Lossless are package music's: every source's stream levels.
+var Levels = music.Levels
 
-// Lossless reports whether level streams FLAC.
-func Lossless(level string) bool { return level == "lossless" || level == "hires" }
+func Lossless(level string) bool { return music.Lossless(level) }
 
 // SongURL returns where to stream a track, MP3 or FLAC, at level (one of
 // Levels) or the best below it the listener may play. It goes through
@@ -481,10 +395,19 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 	return res.Lrc.Lyric, res.Tlyric.Lyric, yrc, nil
 }
 
-// Sized asks the image CDN for a picture of n×n pixels.
+// Sized asks the image CDN for a picture of n×n pixels. NetEase's is the
+// only one that resizes by a parameter: an address of another source that
+// carries a query of its own is left as it is, its size a part of it.
 func Sized(pic string, n int) string {
 	if pic == "" {
 		return ""
+	}
+	if i := strings.IndexByte(pic, '?'); i >= 0 {
+		// The size a NetEase address carries is its own: it is replaced.
+		if strings.HasPrefix(pic[i:], "?param=") {
+			return strings.Replace(pic[:i], "http://", "https://", 1) + fmt.Sprintf("?param=%dy%d", n, n)
+		}
+		return pic
 	}
 	pic = strings.Replace(pic, "http://", "https://", 1)
 	return fmt.Sprintf("%s?param=%dy%d", pic, n, n)

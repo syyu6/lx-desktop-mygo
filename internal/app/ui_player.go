@@ -400,7 +400,16 @@ func (a *app) playerBar(c *ui.Context) {
 						sub, color = pl.Err(), p.accent
 					}
 					if sub == "" {
-						a.artistLinks(c, tr, p.muted, p.text).FontSize(12).SingleLine()
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							a.artistLinks(c, tr, p.muted, p.text).FontSize(12).SingleLine().Shrink(1).MinWidth(0)
+							// The source that has the song, where its own
+							// source would not stream it: what the chain
+							// found it on.
+							if served := pl.Served(); served != "" && served != tr.Src() {
+								ui.Text(c, a.sourceTag(served)).FontSize(9.5).FontWeight(600).TextColor(p.muted).
+									Padding(0, 5).Radius(999).Background(p.hover).SingleLine()
+							}
+						})
 					} else {
 						ui.Text(c, sub).FontSize(12).TextColor(color).SingleLine()
 					}

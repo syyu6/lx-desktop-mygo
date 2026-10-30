@@ -14,70 +14,46 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
-// Clicking the account row drops its menu, which takes the focus so the
-// arrows walk its items, and Escape or a second click puts it away.
-func TestAccountMenu(t *testing.T) {
+// The account lives in the settings, beside the sources it plays from: the
+// sidebar keeps none of it, so that nothing at its foot is a button the
+// listener did not ask for.
+func TestSignInIsInTheSettings(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
-	a.profile = &netease.Profile{UserID: 1, Nickname: "小明"}
-	tt := ui.NewTester(a.view, 1000, 700)
+	a.loadRegistry()
+	openSettingsTab(a, settingsSources)
+	tt := ui.NewTester(a.settingsView, settingsWidth, 1400)
 	tt.Frame()
-
-	if err := tt.Click("小明"); err != nil {
-		t.Fatal(err)
+	if _, ok := tt.Find("扫码登录"); !ok {
+		t.Fatal("the settings have no way to sign in")
 	}
-	tt.Frame()
-	if !a.accountOpen || !tt.HasText("退出登录") {
-		t.Fatalf("menu not open: %v", a.accountOpen)
+	if _, ok := tt.Find("网易云音乐账号"); !ok {
+		t.Error("the account's group is not in the settings")
 	}
-	if !tt.Focused("我的主页") {
-		t.Fatal("the first item has no focus")
-	}
-	tt.Key(0, ui.KeyDown)
-	tt.Key(0, ui.KeyDown)
-	tt.Frame()
-	if !tt.Focused("退出登录") {
-		t.Fatal("Down did not move to signing out")
-	}
-	tt.Key(0, ui.KeyEscape)
-	tt.Frame()
-	if a.accountOpen {
-		t.Fatal("Escape left the menu open")
-	}
-
-	tt.Click("小明")
-	tt.Frame()
-	tt.Click("小明")
-	tt.Frame()
-	if a.accountOpen {
-		t.Fatal("a second click left the menu open")
+	// And the sidebar has nothing of the account, signed in or not.
+	main := ui.NewTester(a.view, 1000, 700)
+	main.Frame()
+	for _, s := range main.Texts() {
+		if s == "登录网易云音乐" || s == "登录" {
+			t.Errorf("the sidebar still shows a sign-in: %q", s)
+		}
 	}
 }
 
-// 我的主页 in the account menu opens the page of who is signed in and puts
-// the menu away.
-func TestAccountMenuOpensOwnPage(t *testing.T) {
-	detail, playlists := userDetail, userPlaylists
-	defer func() { userDetail, userPlaylists = detail, playlists }()
-	userDetail = func(id int64) (*netease.User, error) { return &netease.User{UserID: id, Nickname: "小明"}, nil }
-	userPlaylists = func(int64) ([]netease.Playlist, []netease.Playlist, error) { return nil, nil, nil }
-
+// With the account signed in, the settings show who it is and a way out.
+func TestSignedInAccountInTheSettings(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
-	a.profile = &netease.Profile{UserID: 42, Nickname: "小明"}
-	tt := ui.NewTester(a.view, 1000, 700)
+	a.loadRegistry()
+	a.profile = &netease.Profile{UserID: 1, Nickname: "小明"}
+	openSettingsTab(a, settingsSources)
+	tt := ui.NewTester(a.settingsView, settingsWidth, 1400)
 	tt.Frame()
-	tt.Click("小明")
-	tt.Frame()
-	if err := tt.Click("我的主页"); err != nil {
-		t.Fatal(err)
+	if !tt.HasText("已登录 · 小明") {
+		t.Error("the settings do not say who is signed in")
 	}
-	tt.Frame()
-	if a.route.page != pageUser || a.route.id != 42 {
-		t.Fatalf("route = %+v, want the page of user 42", a.route)
-	}
-	if a.accountOpen {
-		t.Fatal("the menu stayed open")
+	if _, ok := tt.Find("退出登录"); !ok {
+		t.Error("the settings have no way to sign out")
 	}
 }
 

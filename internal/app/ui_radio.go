@@ -167,7 +167,7 @@ func (a *app) startHeartMode() {
 		s := *cur
 		seed, fromPlaying = &s, true
 	}
-	liked := a.playlists[pid]
+	liked := a.playlists[playlistKey("", pid)]
 	a.radioStarting = heartRadio
 	go func() {
 		if seed == nil {

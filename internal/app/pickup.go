@@ -53,8 +53,9 @@ func (a *app) pickUp(uid int64) {
 // lastStretch returns the songs of the listener's last stretch of
 // listening, in the order they played, and the last play of them: on one
 // device, each song within half an hour of the next, the last in the past
-// week. Songs they may not play are left out, and songs played twice show
-// where they played last.
+// week. Songs no source can play are left out — a VIP one is not, as
+// another source may have it — and songs played twice show where they
+// played last.
 func lastStretch(plays []netease.Play, now time.Time) (songs []netease.Track, last netease.Play, ok bool) {
 	if len(plays) == 0 || now.Sub(plays[0].At) > 7*24*time.Hour {
 		return nil, netease.Play{}, false

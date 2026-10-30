@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -24,8 +25,15 @@ type palette struct {
 	accent    ui.Color
 	onAccent  ui.Color
 	cardShade ui.Color
+	// immersive says the window is painted with the playing song's backdrop
+	// behind it, as Now Playing is: the page and the sidebar are shades of
+	// its cover's color rather than the appearance's own, and what is drawn
+	// over them is the light text of a dark window.
+	immersive bool
 }
 
+// paletteFor returns the app's colors for the theme t: the light or the dark
+// one, and the accent the appearance asks for.
 func paletteFor(t *ui.Theme) palette {
 	if t.Dark {
 		return palette{
@@ -56,6 +64,278 @@ func paletteFor(t *ui.Theme) palette {
 		onAccent:  ui.Hex("#ffffff"),
 		cardShade: ui.RGBA(0, 0, 0, 0.16),
 	}
+}
+
+// paletteFor returns the app's colors for the theme t: the light or the dark
+// one, and what the appearance asks for. Following the player, and with a
+// song playing, the whole window is the song's: the backdrop Now Playing
+// paints behind it, and a dark palette of its cover's color over that.
+// Without a song there is nothing to follow, and the system's own colors
+// show instead.
+func (a *app) paletteFor(t *ui.Theme, c *ui.Context) palette {
+	p := paletteFor(t)
+	tr := a.followingTrack()
+	if a.settings.Appearance != "cover" || tr == nil {
+		// Nothing plays, or the appearance follows the system: the
+		// player's palette is not on screen, and the next one snaps in
+		// rather than fading from a window that was another's.
+		a.themeActive = false
+		return p
+	}
+	tint := a.coverTint()
+	if !a.tintKnown {
+		// Its cover is still loading: the dark Now Playing paints while
+		// there is none, so that the window does not flash the system's
+		// light colors on the way to the song's.
+		tint = npTint
+	}
+	if !a.themeActive {
+		// The first frame that follows the player: there is nothing on
+		// screen to fade from, and the window is the song's at once.
+		a.themeActive, a.themeTint, a.themeFrom = true, tint, immersivePalette(tint)
+		return a.themeFrom
+	}
+	to := immersivePalette(tint)
+	now := c.Now()
+	if tint != a.themeTint {
+		// Another song: the window goes from the colors it shows now to
+		// the new one's, rather than cutting from one to the other.
+		a.themeFrom = blendPalette(a.themeFrom, immersivePalette(a.themeTint), themeProgress(now, a.themeAt))
+		a.themeTint, a.themeAt = tint, now
+	}
+	if k := themeProgress(now, a.themeAt); k < 1 {
+		c.AnimationFrame()
+		return blendPalette(a.themeFrom, to, k)
+	}
+	return to
+}
+
+// windowColor is the window's own color, around the frame the app draws:
+// the system's, or the playing song's while the appearance follows the
+// player, so that the edge of a resize and the first frame after a change
+// are the song's rather than a white edge around a dark window.
+func (a *app) setWindowColor(p palette) {
+	if a.win == nil {
+		return
+	}
+	// Back to the system's, as the window was made: it changes only while
+	// the appearance follows the player.
+	if !p.immersive && a.settings.Appearance != "cover" {
+		return
+	}
+	want := "light-dark(#ffffff, #141416)"
+	if p.immersive {
+		want = fmt.Sprintf("#%02x%02x%02x", p.bg.R, p.bg.G, p.bg.B)
+	}
+	if want == a.winColor {
+		return
+	}
+	a.winColor = want
+	_ = a.win.SetBackgroundColor(want)
+}
+
+// themeFade is how long the window takes to go from one song's colors to
+// the next one's, about as long as the backdrop behind them.
+const themeFade = 650 * time.Millisecond
+
+// themeProgress returns how far the window has gone from the colors of the
+// song before to the playing one's, eased so that it starts and ends
+// gently.
+func themeProgress(now, from time.Time) float32 {
+	if from.IsZero() {
+		return 1
+	}
+	k := min(max(float32(now.Sub(from))/float32(themeFade), 0), 1)
+	return k * k * (3 - 2*k)
+}
+
+// blendPalette returns the palette k of the way from a to b, as the window
+// fades between two songs' colors.
+func blendPalette(a, b palette, k float32) palette {
+	if k >= 1 {
+		return b
+	}
+	if k <= 0 {
+		return a
+	}
+	mix := func(x, y ui.Color) ui.Color { return x.Mix(y, k) }
+	b.dark = a.dark || b.dark
+	b.bg, b.sidebar = mix(a.bg, b.bg), mix(a.sidebar, b.sidebar)
+	b.text, b.muted, b.faint = mix(a.text, b.text), mix(a.muted, b.muted), mix(a.faint, b.faint)
+	b.hairline, b.hover, b.press = mix(a.hairline, b.hairline), mix(a.hover, b.hover), mix(a.press, b.press)
+	b.accent, b.onAccent = mix(a.accent, b.accent), mix(a.onAccent, b.onAccent)
+	b.cardShade = mix(a.cardShade, b.cardShade)
+	return b
+}
+
+// immersivePalette returns the palette of a window painted with the
+// playing song's backdrop: the dark appearance's text and hairlines, over
+// a page and a sidebar of the cover's own hue, at the depths Now Playing
+// paints its backdrop.
+func immersivePalette(tint ui.Color) palette {
+	p := paletteFor(&ui.Theme{Dark: true})
+	h, s, _ := hsv(float64(tint.R)/255, float64(tint.G)/255, float64(tint.B)/255)
+	if s > 0.12 {
+		s = min(max(s*1.3, 0.45), 0.66)
+	}
+	// The page is the backdrop's own foot, a little deeper than it so that
+	// the sidebar can stand off it; the sidebar a shade lighter, as a
+	// raised surface.
+	deep := hsvColor(h, s, 0.24)
+	p.dark = true
+	p.bg = deep
+	// The sidebar is the backdrop darkened rather than a color of its own:
+	// it shows through, so that the two read as one window, and it still
+	// stands a little below the page.
+	p.sidebar = ui.RGBA(0, 0, 0, 0.28)
+	p.immersive = true
+	// Text is white on it, and what lies over the page is light.
+	p.text = ui.Hex("#f7f7fa")
+	p.muted = ui.RGBA(255, 255, 255, 0.66)
+	p.faint = ui.RGBA(255, 255, 255, 0.36)
+	p.hairline = ui.RGBA(255, 255, 255, 0.1)
+	p.hover = ui.RGBA(255, 255, 255, 0.08)
+	p.press = ui.RGBA(255, 255, 255, 0.14)
+	p.cardShade = ui.RGBA(0, 0, 0, 0.5)
+	p.accent = coverAccent(tint, true)
+	p.onAccent = ui.Hex("#ffffff")
+	return p
+}
+
+// npTint is the gray Now Playing paints while its song's cover has not
+// loaded, which the window behind it paints too rather than the system's
+// light colors.
+var npTint = ui.RGB(120, 120, 130)
+
+// followingTrack returns the song whose cover the window follows while the
+// appearance is the player's, or nil when there is none to follow: nothing
+// plays, or what plays has no cover.
+func (a *app) followingTrack() *netease.Track {
+	tr := a.pl.Current()
+	if tr != nil {
+		a.seed = nil
+	} else {
+		tr = a.seed
+	}
+	if tr == nil || tr.Album.PicURL == "" {
+		return nil
+	}
+	return tr
+}
+
+// coverTint returns the playing song's cover's color: the one the window
+// takes while the appearance follows the player. It is asked for here, so
+// that it loads while the frame is built, and kept for the frames after it,
+// which paint from it as they draw.
+func (a *app) coverTint() ui.Color {
+	tr := a.followingTrack()
+	if tr == nil {
+		a.tintKnown, a.coverArt = false, nil
+		return ui.Color{}
+	}
+	// The size the backdrop needs: it is drawn across the window, and a
+	// cover that small would show its pixels once blurred.
+	art := a.art.get(netease.Sized(tr.Album.PicURL, 600), true)
+	if art == nil || art.failed {
+		if !a.tintKnown {
+			// Its cover has not loaded, and no song's had: the shade Now
+			// Playing paints while it waits, which the window is drawn in
+			// rather than the system's light.
+			return npTint
+		}
+		// Not loaded yet: the last song's colors, so that the window does
+		// not go back to the system's between two songs.
+		return a.tint
+	}
+	// Kept for the frames after this one: the cover's own load posts the
+	// redraw that shows it. A new song's cover, loaded, is the window's at
+	// once rather than the last one's.
+	a.tint, a.tintKnown, a.coverArt = art.tint, true, art
+	a.keepCoverTint(tr.Album.PicURL, art.tint)
+	return a.tint
+}
+
+// keepCoverTint keeps the color the cover at url gave the window, for the
+// next time the app opens on that song (seedTint). It is kept once, as the
+// song's cover has loaded, rather than on every frame.
+func (a *app) keepCoverTint(url string, tint ui.Color) {
+	if a.settings.Appearance != "cover" || a.settings.CoverTintCover == url {
+		return
+	}
+	a.settings.CoverTintCover = url
+	a.settings.CoverTint = fmt.Sprintf("#%02x%02x%02x", tint.R, tint.G, tint.B)
+	_ = a.settings.save()
+}
+
+// hexColor reads "#rrggbb", as keepCoverTint writes it.
+func hexColor(s string) (ui.Color, bool) {
+	if len(s) != 7 || s[0] != '#' {
+		return ui.Color{}, false
+	}
+	var v [3]uint8
+	for i := range v {
+		b, err := strconv.ParseUint(s[1+2*i:3+2*i], 16, 8)
+		if err != nil {
+			return ui.Color{}, false
+		}
+		v[i] = uint8(b)
+	}
+	return ui.RGB(v[0], v[1], v[2]), true
+}
+
+// seedTint takes the color the window was last open in, if the song the
+// session kept is the one it was taken from: the first frame is then drawn
+// in the song's colors, rather than in the system's until its cover has
+// loaded.
+func (a *app) seedTint() {
+	s := a.seed
+	if s == nil || a.settings.CoverTintCover == "" || a.settings.CoverTintCover != s.Album.PicURL {
+		return
+	}
+	c, ok := hexColor(a.settings.CoverTint)
+	if !ok {
+		return
+	}
+	a.tint, a.tintKnown = c, true
+}
+
+// withAccent returns p with the accent taken from the playing song's cover,
+// as the immersive appearance asks: the cover's most vivid color, deepened
+// or lightened to read on p's own background, in place of NetEase's red.
+func (p palette) withAccent(tint ui.Color) palette {
+	a := coverAccent(tint, p.dark)
+	p.accent = a
+	p.onAccent = ui.Hex("#ffffff")
+	return p
+}
+
+// coverAccent returns the accent a cover's tint gives: the cover's own hue,
+// at a saturation and a lightness that read as a fill, white text upon it,
+// on a window of the given appearance.
+func coverAccent(tint ui.Color, dark bool) ui.Color {
+	h, s, _ := hsv(float64(tint.R)/255, float64(tint.G)/255, float64(tint.B)/255)
+	if s < 0.12 {
+		// A gray cover has no color to give: the accent stays NetEase's.
+		return ui.Oklch(accentLightness(dark), 0.2, 22)
+	}
+	// Bright enough to be a color rather than a shadow, deep enough for
+	// white on it: quite saturated, whatever the cover's own was.
+	s = min(max(s, 0.55), 0.85)
+	v := 0.72
+	if dark {
+		v = 0.8
+	}
+	return hsvColor(h, s, v)
+}
+
+// accentLightness is how light the accent is on a background of the given
+// appearance: deep enough for white text on it, and bright enough to stand
+// off a dark window.
+func accentLightness(dark bool) float32 {
+	if dark {
+		return 0.68
+	}
+	return 0.58
 }
 
 // iconButton is a borderless button showing an icon, which a soft circle

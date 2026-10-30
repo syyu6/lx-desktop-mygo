@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"netease-music-mygo/internal/lyrics"
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -116,6 +117,9 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 	case program && a.npPane == paneCaptions && !a.captionsShown():
 		a.npPane = paneProgram
 	case !program && (a.npPane == paneProgram || a.npPane == paneCaptions):
+		a.npPane = a.lyricsPaneChosen()
+	case !program && a.npPane == paneComments && tr.Src() != music.SourceNetease:
+		// Another source's song has no comments: the pane before them shows.
 		a.npPane = a.lyricsPaneChosen()
 	}
 	if a.npPane != paneQueue {
@@ -280,7 +284,13 @@ func (a *app) npTabs() []npTab {
 		}
 		return append(tabs, npTab{paneQueue, "待播清单"}, npTab{paneComments, "评论"})
 	}
-	return []npTab{{paneLyrics, "歌词"}, {paneStage, "律动"}, {paneQueue, "待播清单"}, {paneWall, "选歌"}, {paneComments, "评论"}}
+	tabs := []npTab{{paneLyrics, "歌词"}, {paneStage, "律动"}, {paneQueue, "待播清单"}, {paneWall, "选歌"}}
+	// Comments are NetEase's: another source's song has none, and no tab
+	// for them.
+	if tr := a.pl.Current(); tr != nil && tr.Src() == music.SourceNetease {
+		tabs = append(tabs, npTab{paneComments, "评论"})
+	}
+	return tabs
 }
 
 func (a *app) paneTabs(c *ui.Context) {

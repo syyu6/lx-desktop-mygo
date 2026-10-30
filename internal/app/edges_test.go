@@ -49,14 +49,14 @@ func TestShortPageHasNoEdges(t *testing.T) {
 	}
 }
 
-// Opening or closing the account menu leaves the player's edge as it was:
-// the content's box had no key, so the menu coming or going made it anew,
-// and the edge faded in again from nothing, showing the page bare under
+// Opening and closing the volume popover leaves the player's edge as it
+// was: the content's box had no key, so a layer coming or going made it
+// anew, and the edge faded in from nothing, showing the page bare under
 // the player until something asked for another frame.
-func TestAccountMenuKeepsPlayerEdge(t *testing.T) {
+func TestPopoverKeepsPlayerEdge(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
-	a.profile = &netease.Profile{UserID: 1, Nickname: "小明"}
+	a.pl.Cue([]netease.Track{{ID: 1, Name: "一首歌", Duration: 200000}})
 	for i := range 40 {
 		a.featured = append(a.featured, netease.Playlist{ID: int64(i + 1), Name: "歌单"})
 	}
@@ -64,23 +64,26 @@ func TestAccountMenuKeepsPlayerEdge(t *testing.T) {
 	tt.Frame()
 	tt.Advance(time.Second)
 	tt.Frame()
-	// The player's foot, right of where the menu's shadow reaches.
-	bar := func() *image.RGBA {
-		img := tt.Image()
-		s := float32(img.Bounds().Dx()) / 1000
-		r := image.Rect(int((sidebarWidth+60)*s), int((700-playerBarHeight)*s), img.Bounds().Dx(), img.Bounds().Dy())
-		out := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
-		draw.Draw(out, out.Bounds(), img, r.Min, draw.Src)
-		return out
-	}
-	want := bar()
-	for _, step := range []string{"open", "close"} {
-		if err := tt.Click("小明"); err != nil {
-			t.Fatal(err)
-		}
+	want := barPixels(tt)
+	for _, open := range []bool{true, false} {
+		a.volumeOpen = open
+		tt.Advance(time.Second)
 		tt.Frame()
-		if !bytes.Equal(bar().Pix, want.Pix) {
-			t.Fatalf("the player's edge changed on %s", step)
+		if !bytes.Equal(barPixels(tt).Pix, want.Pix) {
+			t.Fatalf("the player's edge changed on the popover open=%v", open)
 		}
 	}
+}
+
+// barPixels returns a strip of the player bar at its left, where nothing
+// the popovers draw reaches: what it samples is the bar's own edge, which
+// a layer coming or going must not disturb.
+func barPixels(tt *ui.Tester) *image.RGBA {
+	img := tt.Image()
+	s := float32(img.Bounds().Dx()) / 1000
+	r := image.Rect(int((sidebarWidth+10)*s), int((700-playerBarHeight)*s),
+		int((sidebarWidth+180)*s), img.Bounds().Dy())
+	out := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+	draw.Draw(out, out.Bounds(), img, r.Min, draw.Src)
+	return out
 }

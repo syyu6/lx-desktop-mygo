@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo"
 
+	"netease-music-mygo/internal/netease"
 	"netease-music-mygo/internal/player"
 )
 
@@ -21,6 +22,15 @@ func sessionPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "session.json"), nil
+}
+
+// sessionFile is where the session is kept.
+func (a *app) sessionFile() string {
+	path, err := sessionPath()
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 // saveSession keeps where playback is, if it moved on since last kept.
@@ -75,21 +85,47 @@ func (a *app) restoreSession() {
 		return
 	}
 	a.restored = true
-	path, err := sessionPath()
-	if err != nil {
+	// The player has what plays now, or nothing: the song the window was
+	// opened in is no longer needed.
+	a.seed = nil
+	s, ok := a.readSession()
+	if !ok {
 		return
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	var s player.Session
-	if json.Unmarshal(b, &s) != nil {
-		return
-	}
-	a.savedSession = string(b)
 	a.pl.Restore(s)
 	if s.Radio != "" && a.pl.Current() != nil {
 		a.pl.AttachRadio(s.Radio, a.radioFeed(s.Radio))
 	}
+}
+
+// readSession returns where playback was left, as the last time it was
+// kept, and keeps it as what is there.
+func (a *app) readSession() (player.Session, bool) {
+	path := a.sessionFile()
+	if path == "" {
+		return player.Session{}, false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return player.Session{}, false
+	}
+	var s player.Session
+	if json.Unmarshal(b, &s) != nil {
+		return player.Session{}, false
+	}
+	a.savedSession = string(b)
+	return s, true
+}
+
+// seedTrack returns the song the session kept, as the window is about to
+// be made: the window opens in that song's colors, rather than in the
+// system's until the session is back and the player has it. It reads a
+// file, and starts nothing.
+func (a *app) seedTrack() *netease.Track {
+	s, ok := a.readSession()
+	if !ok || s.At < 0 || s.At >= len(s.Queue) {
+		return nil
+	}
+	t := s.Queue[s.At]
+	return &t
 }

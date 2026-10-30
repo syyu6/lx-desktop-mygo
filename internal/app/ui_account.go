@@ -1,7 +1,6 @@
 package app
 
 import (
-	"runtime"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -54,11 +53,14 @@ func (a *app) signedIn(prof *netease.Profile) {
 	a.likedPrograms, a.askedPrograms = nil, nil
 	// What the listener may play, and follows, changed: load the pages
 	// again.
-	a.playlists = map[int64]*netease.Playlist{}
-	a.plErr = map[int64]string{}
+	a.playlists = map[string]*netease.Playlist{}
+	a.plErr = map[string]string{}
 	a.artists, a.albums, a.users, a.podcasts = map[int64]*artistData{}, map[int64]*albumData{}, map[int64]*userData{}, map[int64]*podcastData{}
 	a.podcastTab = &podcastTab{}
 	a.searches = map[route]*searchData{}
+	// The playlists followed from other services are not NetEase's, and are
+	// still at hand.
+	a.seedSubscriptions()
 	a.load(a.route)
 	a.loadHome()
 	if prof == nil {
@@ -242,72 +244,11 @@ func (a *app) profileName() string {
 	return a.profile.Nickname
 }
 
-// accountRow sits at the foot of the sidebar: who is signed in, with a
-// dropdown to open their page or the settings or sign out, or a way to
-// sign in.
-func (a *app) accountRow(c *ui.Context) {
-	p := a.pal
-	b := ui.ButtonBase(c.Key("account")).Height(40).PaddingX(8).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false)
-	if b.Hovered() || a.accountOpen && a.profile != nil {
-		b.Background(p.hover)
-	}
-	if a.profile == nil {
-		a.accountOpen = false
-		b.Label("登录").Children(func() {
-			ui.Box(c).Size(26, 26).Radius(13).Background(p.press).Center().Children(func() {
-				ui.Icon(c, iconUser).Size(14, 14).TextColor(p.muted)
-			})
-			ui.Text(c, "登录网易云音乐").FontSize(13).FontWeight(500).TextColor(p.muted)
-		})
-		if b.Clicked() {
-			a.openLogin()
-		}
-		return
-	}
-	prof := a.profile
-	b.Label(prof.Nickname).Expanded(a.accountOpen).Children(func() {
-		a.avatar(c, prof.AvatarURL, 26, p.press)
-		ui.Text(c, prof.Nickname).FontSize(13).FontWeight(600).SingleLine().Grow(1).Shrink(1).MinWidth(0)
-		ui.Icon(c, iconUpDown).Size(13, 13).TextColor(p.faint)
-	})
-	if b.Clicked() {
-		a.accountOpen = !a.accountOpen
-	}
-	a.accountMenu(c, b)
-}
-
-// accountMenu drops up from the account row, as wide as it, in the colors
-// of the volume popover: the listener's own page and the settings, then
-// signing out.
-func (a *app) accountMenu(c *ui.Context, row ui.Element) {
-	pop := popoverColors(a.pal.dark)
-	ui.PopoverBase(c.Key("account-menu"), row, &a.accountOpen, func(panel ui.Element) {
-		panel.AttachTo(row, ui.AnchorTopStart, ui.AnchorBottomStart).Margin(0, 0, 6, 0).Padding(5).Gap(1).
-			Radius(12).Background(pop.fill).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, ui.RGBA(0, 0, 0, 0.2)).
-			Role(ui.RoleMenu).FocusGroup(ui.Vertical).Label("账户").TransformOrigin(0.5, 1).
-			Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.96, Y: 4}, Exit: &ui.Motion{Scale: 0.98}})
-		if w := row.Bounds().W; w > 0 {
-			panel.Width(w)
-		}
-		shortcut := "Ctrl+,"
-		if runtime.GOOS == "darwin" {
-			shortcut = "⌘,"
-		}
-		if a.menuItem(c, iconUser, "我的主页", "").AutoFocus().Clicked() {
-			a.accountOpen = false
-			a.open(route{page: pageUser, id: a.profile.UserID})
-		}
-		if a.menuItem(c, iconSettings, "设置…", shortcut).Clicked() {
-			a.accountOpen = false
-			a.openSettings()
-		}
-		ui.Box(c).Height(0.5).Margin(4, 8).Background(pop.edge)
-		if a.menuItem(c, iconSignOut, "退出登录", "").Clicked() {
-			a.accountOpen = false
-			a.signOut()
-		}
-	})
-}
+// The account is the settings': 设置 → 音源脚本 has the one sign-in the app
+// has, beside the sources it plays from. The sidebar keeps none of it, so
+// that the foot of the sidebar is the listener's own pages and no button
+// the listener did not ask for. What the account shows is a menu of the
+// app's (menu.go): 我的主页, whose page a sign-in has, and the settings.
 
 // menuItem is an item of a dropdown: an icon, its label, and the shortcut
 // that does the same, if any.
@@ -363,8 +304,8 @@ func (a *app) myPlaylists(c *ui.Context, title string, lists []netease.Playlist,
 	}
 	for i := range lists {
 		pl := &lists[i]
-		selected := a.route.page == pagePlaylist && a.route.id == pl.ID && !a.nowPlaying
-		b := ui.ButtonBase(c.Key(pl.ID)).Height(34).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(pl.Name)
+		selected := a.route.page == pagePlaylist && a.route.src == pl.Source && a.route.id == pl.ID && !a.nowPlaying
+		b := ui.ButtonBase(c.Key(playlistKey(pl.Source, pl.ID))).Height(34).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(pl.Name)
 		switch {
 		case selected:
 			b.Background(p.press)
@@ -386,8 +327,22 @@ func (a *app) myPlaylists(c *ui.Context, title string, lists []netease.Playlist,
 				}
 			})
 		}
+		if sub := a.followed(pl); sub != nil {
+			b.ContextMenu(func(m *ui.Menu) {
+				if m.Item("刷新歌单").Chosen() {
+					a.syncSubscription(sub)
+				}
+				if m.Item("自动更新").Checked(sub.AutoUpdate).Chosen() {
+					a.setSubAuto(sub, !sub.AutoUpdate)
+				}
+				m.Separator()
+				if m.Item("取消订阅").Chosen() {
+					a.unsubscribe(sub)
+				}
+			})
+		}
 		if b.Clicked() {
-			a.open(route{page: pagePlaylist, id: pl.ID})
+			a.open(playlistRoute(pl.Source, pl.ID))
 		}
 	}
 }

@@ -45,6 +45,22 @@ func (a *app) setMenu() {
 				a.nowPlaying = false
 				a.newPlaylist(nil)
 			})},
+			mygo.Separator(),
+			// The account's menu went with the account row: who listens is
+			// shown and signed in to in the settings, and what they may see
+			// of their own is here.
+			{Label: "我的主页", Click: run(func() {
+				if a.profile == nil {
+					a.openSettings()
+					return
+				}
+				a.open(route{page: pageUser, id: a.profile.UserID})
+			})},
+			{Label: "登录网易云音乐…", Click: run(func() {
+				a.showMain()
+				a.openLogin()
+			})},
+			{Label: "退出登录", Click: run(a.signOut)},
 		}},
 		{Label: "编辑", Submenu: []*mygo.MenuItem{
 			{Role: mygo.RoleUndo, Label: "撤销"},
@@ -74,6 +90,8 @@ func (a *app) setMenu() {
 			{Role: mygo.RoleMinimize, Label: "最小化"},
 			{Role: mygo.RoleZoom, Label: "缩放"},
 			{Role: mygo.RoleClose, Label: "关闭"},
+			mygo.Separator(),
+			{Label: "显示/隐藏侧边栏", Accelerator: "CmdOrCtrl+Option+S", Click: run(a.toggleSidebar)},
 			mygo.Separator(),
 			{Label: name, Accelerator: "CmdOrCtrl+0", Click: run(a.showMain)},
 			{Role: mygo.RoleFront, Label: "前置全部窗口"},

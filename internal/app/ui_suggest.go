@@ -88,12 +88,13 @@ func suggestionList(res netease.Suggestions) []suggestion {
 	return out[:min(len(out), 10)]
 }
 
-// searchField is the search field atop the sidebar, which suggests what
-// its query may be after as it is typed, and, empty, lists the searches
-// before.
-func (a *app) searchField(c *ui.Context) {
+// searchField is the search field over a page, which suggests what its
+// query may be after as it is typed, and, empty, lists the searches before.
+// It is the strip over the page's, whatever the sidebar is doing, so it
+// stays where it is as the sidebar folds and unfolds.
+func (a *app) searchField(c *ui.Context) ui.Element {
 	p := a.pal
-	field := ui.Row(c).Height(32).PaddingX(10).Gap(7).Radius(9).AlignItems(ui.Center).Margin(0, 0, 14, 0)
+	field := ui.Row(c).Key("search-bar").Height(30).PaddingX(10).Gap(7).Radius(9).AlignItems(ui.Center)
 	if c.Focused(a.searchBox) {
 		field.Background(p.bg).Shadow(0, 0, 0, 3, p.accent.Alpha(0.25)).Border(1, p.accent.Alpha(0.6))
 	} else {
@@ -170,6 +171,7 @@ func (a *app) searchField(c *ui.Context) {
 			a.search(q)
 		}
 	})
+	return field
 }
 
 // choose goes where the option chosen in the search field's popup goes.

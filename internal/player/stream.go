@@ -325,14 +325,41 @@ type stream interface {
 }
 
 // openStream opens the song dl fetches, MP3 or FLAC, as its first bytes
-// say. An MP3 says nothing of its length: durationMs is it.
+// say. An MP3 says nothing of its length: durationMs is it. A song in
+// another format, as a source script may give, is no song the app decodes.
 func openStream(dl *download, durationMs int64) (stream, error) {
 	off := id3Size(dl)
 	if dl.waitFor(off+4) >= off+4 && string(dl.peek(off, 4)) == "fLaC" {
 		return openFLACStream(dl)
 	}
+	if head := dl.peek(0, 8); len(head) >= 8 {
+		// An MP4 container: `ftyp` at byte 4. Its audio is AAC, which is
+		// decoded by FAAD2 (aac.go); read as MP3, it would play as noise.
+		if string(head[4:8]) == "ftyp" {
+			return openAACStream(dl, durationMs)
+		}
+		// ADTS AAC starts with 0xFFF and a layer of 0 (the top two bits of
+		// the third byte), which an MP3 header never has: its layer is I,
+		// II or III. The frames stand alone, in a stream with no index.
+		if head[0] == 0xFF && head[1]&0xE0 == 0xE0 && head[1]&0x06 == 0 {
+			return openADTSStream(dl, durationMs)
+		}
+		// A page, as a source that has no song answers with: it is not
+		// audio, and its words are the reason.
+		if head[0] == '<' || string(head[:3]) == "\xef\xbb\xbf<" {
+			return nil, ErrNotAudio
+		}
+	}
 	return openMP3Stream(dl, durationMs)
 }
+
+// ErrUnsupportedFormat is returned for a song in a format the player does
+// not decode, such as the AAC a source script may serve.
+var ErrUnsupportedFormat = errors.New("这首歌的格式当前不支持播放")
+
+// ErrNotAudio is returned for what a source answered with that is not a
+// song at all, such as the page of a service that would not serve it.
+var ErrNotAudio = errors.New("音源没有提供这首歌的文件")
 
 // openShared opens a second stream of what dl fetches, for decoding apart
 // from what plays: it measures no spectrum, and closing it lets the song
@@ -350,6 +377,10 @@ func openShared(dl *download, durationMs int64) (stream, error) {
 	case *mp3Stream:
 		s.spec, s.drop = nil, dl.release
 	case *flacStream:
+		s.spec, s.drop = nil, dl.release
+	case *aacStream:
+		s.spec, s.drop = nil, dl.release
+	case *adtsStream:
 		s.spec, s.drop = nil, dl.release
 	}
 	return s, nil

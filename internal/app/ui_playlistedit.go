@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -64,9 +65,9 @@ func (a *app) loadMine(uid int64) {
 // playlistChanged forgets what was loaded of playlist id, which NetEase
 // changed: loaded anew if shown, and the sidebar's covers with it.
 func (a *app) playlistChanged(id int64) {
-	delete(a.playlists, id)
+	delete(a.playlists, playlistKey("", id))
 	if a.route.page == pagePlaylist && a.route.id == id {
-		a.loadPlaylist(id, false)
+		a.loadPlaylist("", id, false)
 	}
 	if a.profile != nil {
 		a.loadMine(a.profile.UserID)
@@ -135,8 +136,8 @@ func (a *app) submitName() {
 			}
 			a.mine = slices.Insert(a.mine, at, *pl)
 			pl.Tracks = nil
-			a.playlists[pl.ID] = pl
-			a.open(route{page: pagePlaylist, id: pl.ID})
+			a.playlists[playlistKey("", pl.ID)] = pl
+			a.open(playlistRoute("", pl.ID))
 			if add != nil {
 				a.addTo(pl.ID, add)
 			}
@@ -180,7 +181,7 @@ func (a *app) deleteChosen() {
 				a.toast = "删除失败，请稍后再试"
 				return
 			}
-			delete(a.playlists, id)
+			delete(a.playlists, playlistKey("", id))
 			a.toast = "已删除歌单"
 		})
 	}()
@@ -190,7 +191,7 @@ func (a *app) setPlaylistName(id int64, name string) {
 	if pl := a.editable(id); pl != nil {
 		pl.Name = name
 	}
-	if pl := a.playlists[id]; pl != nil {
+	if pl := a.playlists[playlistKey("", id)]; pl != nil {
 		pl.Name = name
 	}
 }
@@ -218,7 +219,7 @@ func (a *app) addTo(pid int64, tr *netease.Track) {
 // app and then with NetEase, which may refuse: the song comes back then.
 func (a *app) removeFrom(pid int64, tr *netease.Track) {
 	id := tr.ID
-	pl := a.playlists[pid]
+	pl := a.playlists[playlistKey("", pid)]
 	var before []netease.Track
 	if pl != nil {
 		// A new list: the player may be playing the old one.
@@ -229,7 +230,7 @@ func (a *app) removeFrom(pid int64, tr *netease.Track) {
 		err := removeFromPlaylist(pid, id)
 		a.post(func() {
 			if err != nil {
-				if pl != nil && a.playlists[pid] == pl {
+				if pl != nil && a.playlists[playlistKey("", pid)] == pl {
 					pl.Tracks = before
 				}
 				a.toast = "移除失败，请稍后再试"
@@ -248,7 +249,9 @@ func (a *app) removeFrom(pid int64, tr *netease.Track) {
 // listener's playlists, or take it out of pid, the one it is listed in, if
 // set.
 func (a *app) playlistItems(m *ui.Menu, tr *netease.Track, pid int64) {
-	if a.profile == nil {
+	// A NetEase playlist holds NetEase's songs: another source's have none
+	// of the listener's to be added to.
+	if a.profile == nil || tr.Src() != music.SourceNetease {
 		return
 	}
 	m.Separator()

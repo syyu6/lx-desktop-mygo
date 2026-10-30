@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 	"netease-music-mygo/internal/player"
 )
@@ -15,8 +16,7 @@ const pagePad = 40
 
 // columns returns how many cards of at least min DIPs fit across the page.
 func (a *app) columns(c *ui.Context, min float32) int {
-	w, _ := c.Size()
-	inner := w - sidebarWidth - 2*pagePad
+	inner := a.pageWidth(c) - 2*pagePad
 	return max(2, int((inner+20)/(min+20)))
 }
 
@@ -126,8 +126,15 @@ func (a *app) chartsPage(c *ui.Context) {
 // playlistCard is a square cover with the playlist's name below: it lifts
 // under the pointer, where a play button shows on it.
 func (a *app) playlistCard(c *ui.Context, pl *netease.Playlist) {
-	if a.coverCard(c, pl.Name, pl.Cover(), pl.PlayCount, pl.UpdateFreq, func() { a.loadPlaylist(pl.ID, true) }) {
-		a.open(route{page: pagePlaylist, id: pl.ID})
+	// A card says where a playlist is from when it is not NetEase's: the
+	// sources are searched together, and their playlists look alike. A
+	// search says so of every card, NetEase's too.
+	sub := pl.UpdateFreq
+	if src := a.sourceName(pl.Src()); src != "" || a.route.page == pageSearch {
+		sub = a.sourceTag(pl.Src())
+	}
+	if a.coverCard(c, pl.Name, pl.Cover(), pl.PlayCount, sub, func() { a.loadPlaylist(pl.Src(), pl.ID, true) }) {
+		a.open(playlistRoute(pl.Src(), pl.ID))
 	}
 }
 
@@ -233,16 +240,17 @@ func (a *app) chartCard(c *ui.Context, pl *netease.Playlist) {
 		})
 	})
 	if card.Clicked() {
-		a.open(route{page: pagePlaylist, id: pl.ID})
+		a.open(playlistRoute(pl.Src(), pl.ID))
 	}
 }
 
 func (a *app) playlistPage(c *ui.Context) {
-	id := a.route.id
-	pl := a.playlists[id]
+	src, id := a.route.src, a.route.id
+	key := playlistKey(src, id)
+	pl := a.playlists[key]
 	if pl == nil {
-		if !a.loadingPl[id] {
-			a.centered(c, a.plErr[id], func() { a.loadPlaylist(id, false) })
+		if !a.loadingPl[key] {
+			a.centered(c, a.plErr[key], func() { a.loadPlaylist(src, id, false) })
 			return
 		}
 		s := a.pageShimmer(c)
@@ -266,6 +274,9 @@ func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
 			ui.Text(c, kind).FontSize(12).FontWeight(600).TextColor(p.accent)
 			ui.Text(c, pl.Name).FontSize(30).FontWeight(800).LetterSpacing(-0.6).MaxLines(2).LineHeight(1.2)
 			var meta []string
+			if src := a.sourceName(pl.Src()); src != "" {
+				meta = append(meta, src)
+			}
 			if pl.Creator.Nickname != "" {
 				meta = append(meta, pl.Creator.Nickname)
 			}
@@ -290,6 +301,7 @@ func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
 					}
 					a.pl.PlayQueue(pl.Tracks, firstPlayable(pl.Tracks))
 				}
+				a.subscribeControls(c, pl)
 				if mine := a.editable(pl.ID); mine != nil {
 					more := iconButton(c.Key("more"), iconMore, 18, p.muted, "更多")
 					more.Menu(func(m *ui.Menu) {
@@ -329,12 +341,11 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 	cur := a.pl.Current()
 	// A song's menu can take it out of the playlist it is listed in.
 	var pid int64
-	if a.route.page == pagePlaylist {
+	if a.route.page == pagePlaylist && a.route.src == "" {
 		pid = a.route.id
 	}
-	w, _ := c.Size()
 	// An album's page has no column of the album its songs are on.
-	wide := w-sidebarWidth > 820 && a.route.page != pageAlbum
+	wide := a.pageWidth(c) > 820 && a.route.page != pageAlbum
 	top, bottom := a.insets(c)
 	// Rows out of view are not built, their marks with them: a list
 	// scrolled away from its start or end has content under the bars.
@@ -357,8 +368,10 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 		}
 		i--
 		tr := &tracks[i]
-		playing := cur != nil && cur.ID == tr.ID
-		row := ui.ButtonBase(c.Key(tr.ID)).Height(54).PaddingX(12).Gap(14).Radius(10).AlignItems(ui.Center).FocusRing(false).Label(tr.Name).
+		playing := cur != nil && cur.Ident() == tr.Ident()
+		// By its identity among the sources': two of them may number their
+		// songs alike, and a search lists both.
+		row := ui.ButtonBase(c.Key(tr.Ident())).Height(54).PaddingX(12).Gap(14).Radius(10).AlignItems(ui.Center).FocusRing(false).Label(tr.Name).
 			ContextMenu(a.songItems(tr, pid))
 		hovered := row.Hovered()
 		bg := ui.Transparent
@@ -397,10 +410,19 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 				}
 				ui.RichText(c, spans...).FontSize(14).SingleLine()
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					if !tr.Playable() {
+					// A VIP song plays too, found on whichever source has
+					// it: the badge says the source it is from may want a
+					// subscription, not that it will not play.
+					if tr.VIP() {
 						ui.Text(c, "VIP").FontSize(9).FontWeight(800).TextColor(p.accent).Padding(0, 4).Radius(3).Border(1, p.accent.Alpha(0.6))
 					}
 					a.artistLinks(c, tr, p.muted, p.text).FontSize(12.5).SingleLine().Shrink(1).MinWidth(0)
+					// Where a search lists every source's, each row says
+					// which source it is from.
+					if a.route.page == pageSearch {
+						ui.Text(c, a.sourceTag(tr.Src())).FontSize(10).FontWeight(600).TextColor(p.muted).
+							Padding(1, 6).Radius(999).Background(p.hover).SingleLine()
+					}
 					if tr.Reason != "" {
 						ui.Text(c, tr.Reason).FontSize(10.5).FontWeight(600).TextColor(p.accent).Padding(1, 6).Radius(999).Background(p.accent.Alpha(0.1)).SingleLine()
 					}
@@ -409,10 +431,15 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 			if wide {
 				album := ui.RichText(c).Grow(2).Basis(0).MinWidth(0).FontSize(12.5).TextColor(p.muted).SingleLine()
 				album.Children(func() {
-					if tr.Album.ID == 0 {
+					switch {
+					case tr.Album.ID == 0 || tr.Album.Name == "":
 						ui.Text(c, tr.Album.Name)
-					} else {
+					case tr.Src() == music.SourceNetease:
 						a.link(c.Key("album"), tr.Album.Name, p.muted, p.text, route{page: pageAlbum, id: tr.Album.ID})
+					default:
+						// Another source's albums have no page: their names
+						// open what that source has of them instead.
+						a.link(c.Key("album"), tr.Album.Name, p.muted, p.text, searchRouteOn(tr.Src(), tr.Album.Name))
 					}
 				})
 			}

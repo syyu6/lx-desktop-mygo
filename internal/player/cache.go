@@ -91,6 +91,30 @@ func (c *Cache) download(id int64, st *netease.Stream) *download {
 	})
 }
 
+// downloadUncached fetches the song of the stream st, and keeps none of
+// it: a song from a source the listener imported is not the one the cache
+// would name it, so it is not put with the songs NetEase serves.
+func (c *Cache) downloadUncached(st *netease.Stream) *download {
+	return startDownload(st.URL, st.Size, nil, nil)
+}
+
+// downloadAhead fetches the song of the stream st to wait in, before its
+// turn: in a file of its own, which goes when the song does, rather than
+// in memory as a song the cache would not keep comes. A song fetched
+// ahead is held while another plays, and a whole song's bytes in memory
+// are more than a song in a file costs.
+func (c *Cache) downloadAhead(st *netease.Stream) *download {
+	part := c.part(st)
+	if part == nil {
+		return startDownload(st.URL, st.Size, nil, nil)
+	}
+	// The file is not the cache's: it is where the song waits, and goes
+	// with the song.
+	return startDownload(st.URL, st.Size, part, func(path string, n int64) (string, bool) {
+		return path, false
+	})
+}
+
 // part makes a file for a song of the stream st to come into, or returns
 // nil if the cache would not keep it. Each has a name of its own: the same
 // song played again while it still comes in has another.

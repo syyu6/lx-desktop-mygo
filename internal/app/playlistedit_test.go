@@ -24,7 +24,7 @@ func editTestApp() *app {
 		{ID: 11, Name: "睡前"},
 	}
 	a.saved = []netease.Playlist{{ID: 20, Name: "飙升榜"}}
-	a.playlists[10] = &netease.Playlist{ID: 10, Name: "通勤", Tracks: []netease.Track{
+	a.playlists[playlistKey("", 10)] = &netease.Playlist{ID: 10, Name: "通勤", Tracks: []netease.Track{
 		{ID: 1, Name: "一张相片", Artists: []netease.Artist{{Name: "林宥嘉"}}, Duration: 200000},
 		{ID: 2, Name: "宝船", Artists: []netease.Artist{{Name: "DOUDOU"}}, Duration: 200000},
 	}}
@@ -72,7 +72,7 @@ func TestRemoveSongFromPlaylist(t *testing.T) {
 
 	a := editTestApp()
 	// Playing the id: the queue keeps the song.
-	a.pl.Cue(a.playlists[10].Tracks)
+	a.pl.Cue(a.playlists[playlistKey("", 10)].Tracks)
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 	if err := tt.RightClick("宝船"); err != nil {
@@ -96,7 +96,7 @@ func TestRemoveSongFromPlaylist(t *testing.T) {
 // A playlist the listener saved, not made, offers no removing.
 func TestNoRemovingFromSavedPlaylist(t *testing.T) {
 	a := editTestApp()
-	a.playlists[20] = &netease.Playlist{ID: 20, Name: "飙升榜", Tracks: a.playlists[10].Tracks}
+	a.playlists[playlistKey("", 20)] = &netease.Playlist{ID: 20, Name: "飙升榜", Tracks: a.playlists[playlistKey("", 10)].Tracks}
 	a.route = route{page: pagePlaylist, id: 20}
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()

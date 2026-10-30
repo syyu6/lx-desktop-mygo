@@ -146,8 +146,8 @@ func (a *app) playlistCardsSkeleton(c *ui.Context, s shimmer, n int, min float32
 // trackSkeleton is trackRows while its tracks load: rows of blocks under
 // the header, which may hold blocks of its own.
 func (a *app) trackSkeleton(c *ui.Context, s shimmer, covers bool, header func(c *ui.Context)) {
-	w, h := c.Size()
-	wide := w-sidebarWidth > 820
+	_, h := c.Size()
+	wide := a.pageWidth(c) > 820
 	top, bottom := a.insets(c)
 	a.underTop, a.underBottom = false, true
 	ui.Column(c.Key("skeleton")).Grow(1).Padding(top+pageGap, pagePad-12, bottom+32, pagePad-12).Children(func() {

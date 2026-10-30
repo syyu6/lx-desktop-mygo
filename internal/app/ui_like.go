@@ -6,6 +6,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -40,6 +41,12 @@ func (a *app) loadLiked(uid int64) {
 // and then with NetEase, which may refuse: the heart goes back then. Signed
 // out, it asks the listener to sign in.
 func (a *app) toggleLike(tr *netease.Track) {
+	// What the listener likes is NetEase's: another source's songs have no
+	// list of theirs to be in.
+	if tr.Src() != music.SourceNetease {
+		a.toast = "其它来源的歌曲不能加入喜欢的音乐"
+		return
+	}
 	if a.profile == nil {
 		a.showMain()
 		a.openLogin()
@@ -65,9 +72,9 @@ func (a *app) toggleLike(tr *netease.Track) {
 			// The liked songs' playlist changed: load it anew when shown.
 			for _, pl := range a.mine {
 				if pl.SpecialType == 5 {
-					delete(a.playlists, pl.ID)
+					delete(a.playlists, playlistKey("", pl.ID))
 					if a.route.page == pagePlaylist && a.route.id == pl.ID {
-						a.loadPlaylist(pl.ID, false)
+						a.loadPlaylist("", pl.ID, false)
 					}
 				}
 			}
@@ -106,6 +113,8 @@ func (a *app) likeCurrent() {
 	}
 	a.toggleLike(tr)
 	switch {
+	case tr.Src() != music.SourceNetease:
+		return // said so
 	case a.profile == nil:
 		return // asked to sign in
 	case !a.isLiked(tr):
@@ -182,6 +191,10 @@ func (a *app) programLikesAnswered(uid int64, asked []int64, liked map[int64]boo
 // pops it in on a spring while a ring swells around it and confetti flies
 // out; unliking lets it give a little.
 func (a *app) likeButton(c *ui.Context, tr *netease.Track, size float32, color ui.Color) ui.Element {
+	// Another source's song has no heart: it is not NetEase's to like.
+	if tr.Src() != music.SourceNetease {
+		return ui.Box(c)
+	}
 	if tr.ProgramID != 0 {
 		a.askProgramLikes([]int64{tr.ProgramID})
 	}

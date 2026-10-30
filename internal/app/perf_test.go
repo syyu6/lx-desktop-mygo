@@ -102,3 +102,26 @@ func TestBackdropFadeEnds(t *testing.T) {
 		t.Error("the last song's backdrop still fades after the fade")
 	}
 }
+
+// Following the player, the pages ask for no frames of their own: the
+// backdrop behind them is painted once a song, not thirty times a second as
+// Now Playing's fog is, and the pages keep the frames they had.
+func TestThePageBackdropAsksForNoFrames(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.Appearance = "cover"
+	a.art.art[netease.Sized("a", 600)+"#backdrop"] = &artwork{tint: ui.RGB(200, 40, 40)}
+	a.pl.Cue([]netease.Track{{ID: 1, Name: "一", Album: netease.Album{PicURL: "a"}}})
+	a.pl.Next()
+	tt := ui.NewTester(a.view, 1100, 720)
+	tt.Frame()
+	if !a.pal.immersive {
+		t.Fatal("the window is not painted with the player's backdrop")
+	}
+	for range 4 {
+		tt.Advance(time.Second)
+		if tt.FramePending() {
+			t.Error("the page asks for frames with the backdrop still")
+		}
+	}
+}

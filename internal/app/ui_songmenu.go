@@ -36,8 +36,12 @@ func (a *app) songItems(tr *netease.Track, pid int64) func(m *ui.Menu) {
 			copyText(tr.Name + " - " + tr.ArtistNames())
 		}
 		m.Separator()
-		if m.Item("复制链接").Chosen() {
-			copyText(tr.URL())
+		// A link is NetEase's alone: another source's songs have none it
+		// opens.
+		if link := netease.URL(tr); link != "" {
+			if m.Item("复制链接").Chosen() {
+				copyText(link)
+			}
 		}
 		// Its artists' and album's pages, those NetEase has.
 		linked := tr.Album.ID != 0
@@ -66,7 +70,7 @@ func (a *app) programItems(m *ui.Menu, tr *netease.Track) {
 		copyText(tr.Name)
 	}
 	if m.Item("复制链接").Chosen() {
-		copyText(tr.URL())
+		copyText(netease.URL(tr))
 	}
 	m.Separator()
 	if m.Item("查看播客").Chosen() {
