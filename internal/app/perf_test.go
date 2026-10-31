@@ -53,20 +53,30 @@ func framesAt(a *app, tt *ui.Tester, pos time.Duration) int {
 	return asked
 }
 
-// An app that is not the active one asks for no frames of its own: the
-// window is behind another's, and a frame drawn then is one nobody sees,
-// which the window only gives back once it has drawn nothing for a while.
-func TestBackgroundAppAsksForNoFrames(t *testing.T) {
+// A window hidden or minimized asks for no frames of its own: a frame drawn
+// then is one nobody sees, which the window only gives back once it has
+// drawn nothing for a while. One still on screen keeps drawing whether or
+// not the app is the active one, since a window left in front of another
+// app's is a window somebody reads; a window covered by another's is
+// stopped by MyGo itself, which holds the frames of an occluded window
+// before they are drawn.
+func TestWindowHiddenAsksForNoFrames(t *testing.T) {
 	a, tt, _ := playingApp()
 	a.settings.Smoke = true
 	a.nowPlaying, a.npPane = true, paneStage
-	a.focused = false
-	if n := framesAt(a, tt, 12*time.Second); n > 1 {
-		t.Errorf("the stage while the app is in the background: %d frames a second", n)
-	}
-	a.focused = true
-	if n := framesAt(a, tt, 12*time.Second); n < 2 {
-		t.Errorf("the stage once the app is active again: %d frames a second", n)
+	for _, c := range []struct {
+		name           string
+		focused, shown bool
+		least, most    int
+	}{
+		{"in front of another app", false, true, 2, 60},
+		{"active", true, true, 2, 60},
+		{"hidden", false, false, 0, 1},
+	} {
+		a.focused, a.shown = c.focused, c.shown
+		if n := framesAt(a, tt, 12*time.Second); n < c.least || n > c.most {
+			t.Errorf("the stage, %s: %d frames a second, want %d to %d", c.name, n, c.least, c.most)
+		}
 	}
 }
 

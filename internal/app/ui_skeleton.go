@@ -15,7 +15,7 @@ type shimmer struct {
 	base, sheen ui.Color
 	span        float32 // the width the band crosses: the window's
 	still       bool    // the desktop asks for less motion: no band
-	focused     bool    // the app is the active one: the band moves
+	shown       bool    // anyone looks at the window: the band moves
 }
 
 const (
@@ -26,7 +26,7 @@ const (
 
 // pageShimmer is the shimmer of the pages, on their background.
 func (a *app) pageShimmer(c *ui.Context) shimmer {
-	s := shimmer{base: ui.RGBA(0, 0, 0, 0.06), sheen: ui.RGBA(0, 0, 0, 0.022), focused: a.focused}
+	s := shimmer{base: ui.RGBA(0, 0, 0, 0.06), sheen: ui.RGBA(0, 0, 0, 0.022), shown: a.showing()}
 	if a.pal.dark {
 		s.base, s.sheen = white.Alpha(0.07), white.Alpha(0.13)
 	}
@@ -35,7 +35,7 @@ func (a *app) pageShimmer(c *ui.Context) shimmer {
 
 // npShimmer is the shimmer over the now playing view's backdrop.
 func (a *app) npShimmer(c *ui.Context) shimmer {
-	return shimmer{base: white.Alpha(0.1), sheen: white.Alpha(0.2), focused: a.focused}.in(c)
+	return shimmer{base: white.Alpha(0.1), sheen: white.Alpha(0.2), shown: a.showing()}.in(c)
 }
 
 func (s shimmer) in(c *ui.Context) shimmer {
@@ -53,12 +53,12 @@ func (s shimmer) paint(p *ui.Painter, r ui.Rect, radius float32) {
 	at := time.Duration(p.Now().UnixNano() % int64(shimmerPeriod))
 	if at >= shimmerSweep {
 		p.Fill(r, s.base, radius)
-		if s.focused {
+		if s.shown {
 			p.After(shimmerPeriod - at)
 		}
 		return
 	}
-	if s.focused {
+	if s.shown {
 		p.AnimationFrameRate(60)
 	}
 	t := float32(at) / float32(shimmerSweep)

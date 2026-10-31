@@ -66,6 +66,15 @@ type app struct {
 	// the frames it would have asked for are left to the system, which
 	// gives back what drawing them took.
 	focused bool
+	// shown says whether the window is on screen, whatever has the
+	// keyboard: shown or minimized, as the system tells it, and never
+	// hidden by the app. With focused it says whether anyone may be
+	// looking at the window.
+	//
+	// It is kept here rather than asked of the window each frame: IsVisible
+	// is a question to the window server, and a view asks this many times a
+	// frame.
+	shown bool
 
 	route   route
 	history []route
@@ -323,6 +332,7 @@ func Run() error {
 		queueAt:    -1,
 		cacheUsed:  -1,
 		focused:    true,
+		shown:      true,
 	}
 	moveOldData()
 	a.useUpdater()
@@ -393,10 +403,16 @@ func Run() error {
 		a.win.OnHide(a.syncDock)
 		// Shown or switched to the morning after, it shows the new day's.
 		a.win.OnFocus(a.freshenHome)
-		// Nothing in the window moves on its own while the app is not the
-		// active one: the pointer is elsewhere, and the levels, the record
-		// and the smoke would only ask for frames to show what nobody is
-		// looking at. The frame that shows the window again draws whole.
+		// Nothing in the window moves on its own while nobody looks at it:
+		// the pointer is elsewhere, and the levels, the record and the smoke
+		// would only ask for frames to show what nobody is looking at. The
+		// frame that shows the window again draws whole.
+		//
+		// Another app having the keyboard is not the same as nobody
+		// looking, though: the window may stand in front of that app, as one
+		// playing music over a browser does, and its lyrics must go on then.
+		// So shown is kept as the window tells it, and the two together
+		// decide.
 		mygo.App.OnDidBecomeActive(func() {
 			old := a.focused
 			a.focused = true
@@ -411,6 +427,8 @@ func Run() error {
 			}
 		})
 		mygo.App.OnDidResignActive(func() { a.focused = false })
+		a.win.OnShow(func() { a.shown = true })
+		a.win.OnHide(func() { a.shown = false })
 		a.applyTray()
 		if shotHook != nil {
 			shotHook(a)

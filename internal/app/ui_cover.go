@@ -161,7 +161,7 @@ func (a *app) npCover(c *ui.Context, tr *netease.Track, art *artwork, size float
 	if cs.swipe != 0 {
 		if c.Now().Sub(cs.swipeAt) >= swipeRest {
 			a.letSwipeGo(size, fling)
-		} else if a.focused {
+		} else if a.showing() {
 			c.After(swipeRest)
 		}
 	}

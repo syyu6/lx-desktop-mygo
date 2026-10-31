@@ -55,7 +55,7 @@ func (a *app) captionsPane(c *ui.Context, tr *netease.Track, h float32) {
 	if cur >= 0 && pos >= lines[cur].End && a.captionsWriting(pos) {
 		cur = -1
 	}
-	if pl.Playing() && a.focused {
+	if pl.Playing() && a.showing() {
 		if i := lyrics.Index(lines, pos); i+1 < len(lines) {
 			c.After(lines[i+1].At - pos + 20*time.Millisecond)
 		}

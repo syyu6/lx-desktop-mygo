@@ -57,6 +57,35 @@ func words(texts ...string) []lyrics.Word {
 	return out
 }
 
+// 字号 in the stage's menu sets the lyrics larger, and 标准 back to the
+// size the window chooses; the last one chosen is remembered.
+func TestStageFontSizeMenu(t *testing.T) {
+	a, tt, _ := playingApp()
+	a.nowPlaying, a.npPane = true, paneStage
+	a.pl.Seek(2 * time.Second)
+	tt.Frame()
+	for _, c := range []struct {
+		item string
+		want float64
+	}{
+		{"字号：特大", 1.6},
+		{"字号：大", 1.3},
+		{"字号：小", 0.85},
+		{"字号：标准", 0},
+	} {
+		if err := tt.Click("律动效果"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tt.ChooseMenuItem(c.item); err != nil {
+			t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+		}
+		tt.Frame()
+		if a.settings.LyricScale != c.want {
+			t.Errorf("chose %s: scale %v, want %v", c.item, a.settings.LyricScale, c.want)
+		}
+	}
+}
+
 // A line breaks at its spaces and punctuation, punctuation staying with
 // the word before it and a contraction whole, and a long run of
 // characters in pieces.
@@ -102,5 +131,34 @@ func TestTiltSplitsAtPunctuation(t *testing.T) {
 	}
 	if parts := splitParts(ws, units, 2); parts[0].to != 7 {
 		t.Errorf("split at %d, not after 星，", parts[0].to)
+	}
+}
+
+// The lyrics follow the size the listener chose, in the pane that scrolls
+// them and on the stage, and the size the window chooses when they chose
+// none.
+func TestLyricScaleReachesTheLines(t *testing.T) {
+	a, tt, _ := playingApp()
+	a.nowPlaying, a.npPane = true, paneLyrics
+	if got, want := a.lyricSize(30), float32(30); got != want {
+		t.Errorf("unset: size %v, want %v", got, want)
+	}
+	a.settings.LyricScale = 1.6
+	if got, want := a.lyricSize(30), float32(48); got != want {
+		t.Errorf("特大: size %v, want %v", got, want)
+	}
+	// The line sung is set in the larger size: its row is taller than the
+	// one the same lyrics take at the standard size.
+	a.pl.Seek(2 * time.Second)
+	tt.Frame()
+	big, ok := tt.Find("一二三四五六")
+	if !ok {
+		t.Fatal("the line sung is not there")
+	}
+	a.settings.LyricScale = 0
+	tt.Frame()
+	small, _ := tt.Find("一二三四五六")
+	if big.H <= small.H {
+		t.Errorf("特大: the line is %v tall, the standard size's %v", big.H, small.H)
 	}
 }

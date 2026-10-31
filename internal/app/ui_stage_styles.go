@@ -56,7 +56,36 @@ func (a *app) stageStyleButton(c *ui.Context) {
 			a.settings.StageSparks = !a.settings.StageSparks
 			a.settings.save()
 		}
+		m.Separator()
+		for _, z := range lyricScales {
+			if m.Item("字号：" + z.label).Checked(nearScale(a.settings.LyricScale, z.value)).Chosen() {
+				a.settings.LyricScale = z.value
+				a.settings.save()
+			}
+		}
 	})
+}
+
+// lyricScales are the sizes the lyrics may be set in, from the smallest to
+// the largest, as a multiple of the size the window would choose. The
+// standard one follows the window, which is what a new install starts on.
+var lyricScales = []struct {
+	label string
+	value float64
+}{
+	{"小", 0.85},
+	{"标准", 0},
+	{"大", 1.3},
+	{"特大", 1.6},
+}
+
+// nearScale reports whether the listener's choice is z, either set to it or
+// unset where z is what an unset choice means: the window's own size.
+func nearScale(set, z float64) bool {
+	if z == 0 {
+		return set <= 0
+	}
+	return set > 0 && math.Abs(set-z) < 0.01
 }
 
 // sparkTime is how long a word's sparks fly.
@@ -358,8 +387,8 @@ func splitParts(words []lyrics.Word, units [][2]int, n int) []tiltPart {
 // the accent, its characters up and down by turns. The whole line is at
 // opacity fade, rising a little as it goes; with sparks, each word throws
 // them as it is sung.
-func tiltLine(c *ui.Context, l *lyrics.Line, pos time.Duration, w, fade float32, accent ui.Color, sparks bool) {
-	size := min(w*0.06875, 90)
+func tiltLine(c *ui.Context, l *lyrics.Line, pos time.Duration, w, scale, fade float32, accent ui.Color, sparks bool) {
+	size := min(w*0.06875, 96) * scale
 	avail := w * 0.85
 	style := func(p tiltPart) (weight int, spacing float32) {
 		if p.lean {

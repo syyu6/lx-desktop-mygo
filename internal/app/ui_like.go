@@ -225,7 +225,7 @@ func (a *app) likeButton(c *ui.Context, tr *netease.Track, size float32, color u
 		start, accent := *burst, a.pal.accent
 		wrap.DrawOver(func(p *ui.Painter, r ui.Rect) {
 			if drawBurst(p, r, size, p.Now().Sub(start), accent) {
-				if a.focused {
+				if a.showing() {
 					p.AnimationFrame()
 				}
 			}

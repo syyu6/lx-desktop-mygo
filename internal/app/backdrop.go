@@ -218,17 +218,17 @@ func (a *app) paintBackdrop(p *ui.Painter, r ui.Rect, bd *backdropCache, art *ar
 			// Eased out, as it fades.
 			k = 1 - (1-k)*(1-k)*(1-k)
 			p.ImageRegion(bd.before.Bitmap(), ui.Rect{}, r, ui.ImageOptions{Tint: white.Alpha(1 - k)})
-			if a.focused {
+			if a.showing() {
 				p.AnimationFrame()
 			}
 		} else {
 			bd.before = nil
 		}
 	}
-	if changing && a.focused {
+	if changing && a.showing() {
 		p.AnimationFrame()
 	}
-	if moved && a.focused {
+	if moved && a.showing() {
 		p.After(backdropFrame)
 	}
 }

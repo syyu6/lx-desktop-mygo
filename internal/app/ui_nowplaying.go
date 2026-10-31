@@ -423,7 +423,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) {
 				lyricsSkeleton(c, a.npShimmer(c))
 				return
 			}
-			ui.Text(c, "纯音乐，请欣赏").FontSize(24).FontWeight(700).TextColor(white.Alpha(0.4))
+			ui.Text(c, "纯音乐，请欣赏").FontSize(a.lyricSize(24)).FontWeight(700).TextColor(white.Alpha(0.4))
 		})
 		a.quietCard(c, dim, h*0.18)
 		return
@@ -431,7 +431,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) {
 	pos := pl.Position()
 	cur := lyrics.Index(lines, pos)
 	// Redraw as the next line begins.
-	if pl.Playing() && cur+1 < len(lines) && a.focused {
+	if pl.Playing() && cur+1 < len(lines) && a.showing() {
 		c.After(lines[cur+1].At - pos + 20*time.Millisecond)
 	}
 	if a.lyricTrack != tr.ID {
@@ -451,11 +451,26 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) {
 		scroll.Invisible()
 	}
 	defer a.quietCard(c, dim, h*0.18)
-	a.timedLines(c, scroll, lines, pos, cur, lag, linesStyle{size: 30, weight: 800, lineHeight: 1.25, quiet: quiet}, nil)
+	a.timedLines(c, scroll, lines, pos, cur, lag, linesStyle{size: a.lyricSize(30), weight: 800, lineHeight: 1.25, quiet: quiet}, nil)
+}
+
+// lyricSize scales the size Now Playing would give its lyrics: the
+// listener's LyricScale, if they chose one, rather than the window's guess.
+// It is the one place the choice reaches the panes, so that the scrolling
+// lyrics, the stage, the captions and the note a piece of music shows all
+// grow together.
+func (a *app) lyricSize(size float32) float32 {
+	if a.settings.LyricScale <= 0 {
+		return size
+	}
+	return size * float32(a.settings.LyricScale)
 }
 
 // linesStyle is how timedLines sets its lines: the size, weight and
 // leading of their type; quiet nearly hides them, under a hot comment.
+// The size is what the window chooses, before the listener's LyricScale:
+// timedLines applies that, so that what the lines are set in is in one
+// place.
 type linesStyle struct {
 	size       float32
 	weight     int
@@ -470,6 +485,7 @@ type linesStyle struct {
 // lit has still to go (lyricGlide). foot, if set, follows the lines.
 func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, pos time.Duration, cur int, lag float32, st linesStyle, foot func()) {
 	pl := a.pl
+	st.size = a.lyricSize(st.size)
 	var active ui.Element
 	scroll.Children(func() {
 		ui.Column(c).Gap(6).Translate(0, -lag).Children(func() {
@@ -508,7 +524,7 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 									ui.Text(c.Key(wi), wd.Text).TextColor(white.Alpha(0.38 + 0.62*lit))
 								}
 							})
-							if pl.Playing() && a.focused {
+							if pl.Playing() && a.showing() {
 								// Words brighten smoothly enough at 25 frames a second.
 								c.After(40 * time.Millisecond)
 							}
@@ -516,7 +532,8 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 							ui.Text(c, l.Text).FontSize(st.size).FontWeight(st.weight).LineHeight(st.lineHeight).LetterSpacing(-0.4).TextColor(white)
 						}
 						if l.Translation != "" {
-							ui.Text(c, l.Translation).FontSize(17).FontWeight(600).TextColor(white.Alpha(0.7))
+							// The translation follows its line, a step smaller.
+							ui.Text(c, l.Translation).FontSize(st.size * 0.56).FontWeight(600).TextColor(white.Alpha(0.7))
 						}
 					})
 				})
@@ -620,7 +637,7 @@ func (g *lyricGlide) step(a *app, c *ui.Context, s *ui.ScrollState) float32 {
 	if !g.on {
 		return 0
 	}
-	if a.focused {
+	if a.showing() {
 		c.AnimationFrame()
 	}
 	lag, v := g.at(c.Now())

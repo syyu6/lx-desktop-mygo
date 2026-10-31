@@ -114,12 +114,12 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 			p.Fill(ui.Rect{X: head - k/2, Y: r.Y + (r.H-k)/2, W: k, H: k}, fill, k/2)
 		}
 		switch {
-		case smoking > 0.01 && (pl.Playing() || smoking < 1) && a.focused:
+		case smoking > 0.01 && (pl.Playing() || smoking < 1) && a.showing():
 			// The smoke drifts slowly, under a point a frame at 30 frames
 			// a second, which show it smooth for a quarter of what a 120 Hz
 			// display would draw.
 			p.After(time.Second / 30)
-		case pl.Playing() && !st.active && dur > 0 && a.focused:
+		case pl.Playing() && !st.active && dur > 0 && a.showing():
 			// Again when the fill has moved a pixel of the screen, which
 			// takes a good part of a second, rather than every frame.
 			perPixel := dur / float64(r.W*p.Scale())

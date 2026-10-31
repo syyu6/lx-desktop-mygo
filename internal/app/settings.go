@@ -43,6 +43,11 @@ type settings struct {
 	// StageSparks throws sparks off each word on the stage as it is sung,
 	// whatever its style.
 	StageSparks bool `json:"stageSparks,omitempty"`
+	// LyricScale sizes the lyrics, from 0.7 to 1.6 times the size the
+	// window would give them: the listener's own choice, for a big screen
+	// they read from further off, or a book the pane is narrow beside.
+	// Zero means unset, and the sizes the window chooses.
+	LyricScale float64 `json:"lyricScale,omitempty"`
 	// Volume is where the volume was left, from 0 to 1.
 	Volume float64 `json:"volume"`
 	// Normalize evens out the loudness of tracks, by what NetEase

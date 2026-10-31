@@ -310,6 +310,26 @@ func (a *app) settingsView(c *ui.Context) {
 						}
 					})
 				})
+				group("歌词", func() {
+					row("字号", "正在播放页的歌词与律动，全屏时看得更清楚；标准字号跟着窗口大小走", func() {
+						labels := make([]string, len(lyricScales))
+						chosen := lyricScales[1].label
+						for k, z := range lyricScales {
+							labels[k] = z.label
+							if nearScale(s.LyricScale, z.value) {
+								chosen = z.label
+							}
+						}
+						if ui.Select(c.Key("lyric-scale"), &chosen, labels).Label("歌词字号").Width(120).Changed() {
+							for _, z := range lyricScales {
+								if z.label == chosen {
+									s.LyricScale = z.value
+									a.changed()
+								}
+							}
+						}
+					})
+				})
 			}
 		})
 	})

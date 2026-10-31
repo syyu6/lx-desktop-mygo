@@ -95,7 +95,10 @@ func (a *app) stage(c *ui.Context, tr *netease.Track, accent ui.Color) {
 	pl := a.pl
 	lines, loaded := pl.Lyrics()
 	w, h := c.Size()
-	f := min(64, max(36, w*0.045))
+	// A line grows with the window, up to the size a full screen reads
+	// from across a room; past it, the size the listener chose for the
+	// lyrics takes over (lyricSize).
+	f := a.lyricSize(min(96, max(36, w*0.045)))
 	box := ui.Box(c.Key("stage")).Grow(1)
 	// In a quiet part a hot comment takes the middle, the lyrics nearly
 	// gone under it (ui_quiet.go).
@@ -107,7 +110,7 @@ func (a *app) stage(c *ui.Context, tr *netease.Track, accent ui.Color) {
 					stageSkeleton(c, a.npShimmer(c), f, w)
 					return
 				}
-				ui.Text(c, "纯音乐，请欣赏").FontSize(28).FontWeight(800).TextColor(white.Alpha(0.4))
+				ui.Text(c, "纯音乐，请欣赏").FontSize(a.lyricSize(28)).FontWeight(800).TextColor(white.Alpha(0.4))
 			})
 			a.stageQuiet(c, dim, f, w)
 		})
@@ -117,7 +120,7 @@ func (a *app) stage(c *ui.Context, tr *netease.Track, accent ui.Color) {
 	cur := lyrics.Index(lines, pos)
 	// Under a hot comment there is nothing to move: the quiet asks for
 	// the frame where it ends.
-	if pl.Playing() && !(quiet && dim > 0.98) && a.focused {
+	if pl.Playing() && !(quiet && dim > 0.98) && a.showing() {
 		// 倾诉 shows a part of a line a little before it is sung.
 		lead := 80 * time.Millisecond
 		if a.settings.StageStyle == "tilt" {
@@ -149,10 +152,10 @@ func (a *app) stage(c *ui.Context, tr *netease.Track, accent ui.Color) {
 			// The translation, and the line coming next, along the foot.
 			ui.Column(c).Absolute().Left(0).Right(0).Bottom(24).AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
 				if cur >= 0 && lines[cur].Translation != "" {
-					ui.Text(c.Key("translation"), lines[cur].Translation).FontSize(18).FontWeight(600).TextColor(white.Alpha(0.72)).TextAlign(ui.Center)
+					ui.Text(c.Key("translation"), lines[cur].Translation).FontSize(a.lyricSize(18)).FontWeight(600).TextColor(white.Alpha(0.72)).TextAlign(ui.Center)
 				}
 				if cur+1 < len(lines) {
-					ui.Text(c.Key("next"), lines[cur+1].Text).FontSize(14).TextColor(white.Alpha(0.32)).TextAlign(ui.Center).SingleLine()
+					ui.Text(c.Key("next"), lines[cur+1].Text).FontSize(a.lyricSize(14)).TextColor(white.Alpha(0.32)).TextAlign(ui.Center).SingleLine()
 				}
 			})
 		})
@@ -201,16 +204,21 @@ func (a *app) stageLine(c *ui.Context, l *lyrics.Line, pos time.Duration, f, w, 
 		a.partitaLine(c, l, pos, f, h, fade, accent)
 		return
 	case "tilt":
-		tiltLine(c, l, pos, w, fade, accent, a.settings.StageSparks)
+		tiltLine(c, l, pos, w, a.lyricSize(1), fade, accent, a.settings.StageSparks)
 		return
 	}
 	seed := float64(l.At / time.Millisecond)
 	shapes := stageShapes(c, l, f)
 	// Where the line sits: to one side or the middle, a little up or down.
+	// The drift is Folia's, but the line is kept within a column a little
+	// narrower than the stage: across a full screen the words of a short
+	// line would otherwise huddle at the margin, a small island in a field
+	// of nothing, where the middle reads as large.
 	justify := []ui.Align{ui.Start, ui.Center, ui.End}[int(seed)%3]
 	lift := []float32{-0.14, 0, 0.12}[int(seed*2)%3] * h
+	margin := max(w*0.1, (w-min(w, 1500))/2)
 
-	ui.Row(c.Key(l.At)).Absolute().Top(0).Left(0).Right(0).Bottom(0).Padding(0, w*0.1).
+	ui.Row(c.Key(l.At)).Absolute().Top(0).Left(0).Right(0).Bottom(0).Padding(0, margin).
 		Wrap().Justify(justify).AlignContent(ui.Center).AlignItems(ui.Center).Translate(0, lift).
 		Opacity(fade).PassThrough().Children(func() {
 		for i, word := range l.Words {

@@ -122,16 +122,25 @@ func (a *app) paletteFor(t *ui.Theme, c *ui.Context) palette {
 }
 
 // animate asks for the next frame of something moving on its own. The app
-// asks for none while it is not the active one: the window is behind
-// another's, or hidden under it, and a frame drawn then is one nobody sees,
-// which the window gives back only once nothing has drawn for two seconds.
-// The frame that shows it again is drawn whole, as the first of a window
-// brought forward is.
+// asks for none while nobody looks at it: the window is hidden, minimized
+// or covered, and a frame drawn then is one nobody sees, which the window
+// gives back only once nothing has drawn for two seconds. The frame that
+// shows it again is drawn whole, as the first of a window brought forward
+// is.
 func (a *app) animate(c *ui.Context) {
-	if a.focused {
+	if a.showing() {
 		c.AnimationFrame()
 	}
 }
+
+// showing reports whether anyone may be looking at the window: the app is
+// the active one, or the window is on screen with another app's in front.
+// Music that follows the song — the lyrics, the backdrop, the smoke — goes
+// on in both cases, since a window playing over a browser is still a window
+// somebody reads; it stops only when the window is hidden, minimized or
+// covered, where drawing costs the memory the frames hold and shows
+// nothing.
+func (a *app) showing() bool { return a.focused || a.shown }
 
 // withDaily gives p the day's card's colors for its tint, so that the card
 // takes the window's colors from the palette as everything else does,
@@ -558,7 +567,7 @@ func greeting(now time.Time) string {
 // display's, as a record turning or a level meter: the window paints them
 // as often rather than at each refresh.
 func (a *app) rate(p *ui.Painter, fps float32) {
-	if a.focused {
+	if a.showing() {
 		p.AnimationFrameRate(fps)
 	}
 }
