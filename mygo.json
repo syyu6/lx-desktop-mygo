@@ -2,7 +2,7 @@
   "name": "LxMuc",
   "identifier": "dev.demo.lxmucmygo",
   "slug": "lx-desktop-mygo",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "out": "build",
   "updates": {
     "publicKey": "VD0Kt68IUY0ekuZk1xAH5djtB0RqPCNwdwNvnYMSeOo=",

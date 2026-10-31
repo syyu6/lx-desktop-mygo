@@ -10,21 +10,35 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
 )
 
 // The listener's session is NetEase's login cookie, MUSIC_U, which every
-// request carries once signed in. The app keeps it in the system's
-// keychain. Development builds keep it in a private file instead: each
-// rebuild is signed anew, and the keychain would ask before every one of
-// them read it.
+// request carries once signed in. It is kept in a private file in the app's
+// user data directory (0600), not in the system's keychain.
+//
+// The keychain was the wrong place for it on macOS. The app is signed ad
+// hoc, so every release is a different binary, and the Keychain records
+// the binary it let read an item: an update then makes the new one ask
+// "LxMuc wants to use your confidential information stored in …", on the
+// first launch after every release, which reads as the app asking for the
+// password of something. The entry was only as private as the Keychain's
+// item name (the app's identifier), so a file under the user data
+// directory, which is already 0700 and holds the listener's songs and
+// settings, keeps it no less well. Linux and Windows were files already,
+// for the same reason.
 
 const sessionSecret = "netease-session"
 
+// sessionDir is where the session's file is, the user data directory: a
+// test points it elsewhere, as the app there has none of its own.
+var sessionDir = func() (string, error) { return mygo.App.Path(mygo.PathUserData) }
+
 func sessionFile() (string, error) {
-	dir, err := mygo.App.Path(mygo.PathUserData)
+	dir, err := sessionDir()
 	if err != nil {
 		return "", err
 	}
@@ -32,9 +46,6 @@ func sessionFile() (string, error) {
 }
 
 func readSession() ([]byte, error) {
-	if !mygo.IsDev() {
-		return mygo.Secrets.Get(sessionSecret)
-	}
 	path, err := sessionFile()
 	if err != nil {
 		return nil, err
@@ -43,9 +54,6 @@ func readSession() ([]byte, error) {
 }
 
 func writeSession(b []byte) error {
-	if !mygo.IsDev() {
-		return mygo.Secrets.Set(sessionSecret, b)
-	}
 	path, err := sessionFile()
 	if err != nil {
 		return err
@@ -57,10 +65,6 @@ func writeSession(b []byte) error {
 }
 
 func deleteSession() {
-	if !mygo.IsDev() {
-		mygo.Secrets.Delete(sessionSecret)
-		return
-	}
 	if path, err := sessionFile(); err == nil {
 		os.Remove(path)
 	}
@@ -72,10 +76,44 @@ func init() {
 	httpClient.Jar, _ = cookiejar.New(nil)
 }
 
-// RestoreSession puts the session from the keychain in the cookie jar, and
+// adoptOnce keeps the read of the keychain's entry to one a process, and
+// nothing at all once the session is in its file.
+var adoptOnce sync.Once
+
+// adoptKeychainSession takes the session a release before 0.1.26 kept in
+// the keychain, once, into the file it is kept in now: the listener stays
+// signed in across the update instead of being asked to sign in again.
+//
+// The Keychain asks before letting this binary read the entry, as it asks
+// of every new binary — so the first launch after this update asks, for the
+// last time. It is left in place rather than deleted: deleting it needs the
+// item's ACL opened as well, which asks again for a listener who chose
+// "Allow" over "Always Allow", and two prompts are worse than an entry
+// nothing reads any more.
+func adoptKeychainSession() []byte {
+	var adopted []byte
+	adoptOnce.Do(func() {
+		b, err := mygo.Secrets.Get(sessionSecret)
+		if err != nil || len(b) == 0 {
+			return
+		}
+		if err := writeSession(b); err != nil {
+			return
+		}
+		adopted = b
+	})
+	return adopted
+}
+
+// RestoreSession puts the session from its file in the cookie jar, and
 // reports whether there was one.
 func RestoreSession() bool {
 	b, err := readSession()
+	if err == nil && len(b) == 0 {
+		// Signed in by a release before 0.1.26, which kept it in the
+		// keychain: taken from there once, and put where it is kept now.
+		b = adoptKeychainSession()
+	}
 	if err != nil || len(b) == 0 {
 		return false
 	}
