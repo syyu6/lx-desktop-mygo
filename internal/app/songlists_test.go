@@ -181,6 +181,46 @@ func TestSonglistsPageBuilds(t *testing.T) {
 	}
 }
 
+// sourcesWith is what a page uses to know which sources it can show: a
+// source that does not have the page's thing is not offered, and one
+// turned off is not asked. It is asked by interface, so a page built on
+// charts finds QQ Music's charts and not its square.
+func TestSourcesWithAsksByInterface(t *testing.T) {
+	squareOnly := &fakeSquare{}
+	both := idProvider{&fakeSquare{}, "other"}
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.reg = source.NewRegistry(netease.Provider{}, squareOnly, both)
+
+	ids, at := sourcesWith[source.Square](a, "")
+	if len(ids) != 3 {
+		t.Fatalf("squares %v, want NetEase, the fake and other", ids)
+	}
+	if ids[at] != music.SourceNetease {
+		t.Errorf("the square shown is %q", ids[at])
+	}
+
+	// The fake has a square and no charts; NetEase has both. A page built
+	// on charts offers NetEase alone.
+	ids, at = sourcesWith[source.Charted](a, "")
+	if len(ids) != 1 || ids[0] != music.SourceNetease {
+		t.Errorf("charts on %v, want NetEase's alone", ids)
+	}
+	if at != 0 {
+		t.Errorf("the charts shown start at %d", at)
+	}
+
+	// A source turned off is not offered, whatever it has.
+	a.reg.SetSearched("other", false)
+	ids, _ = sourcesWith[source.Square](a, "")
+	for _, id := range ids {
+		if id == "other" {
+			t.Errorf("offered other, which the listener turned off: %v", ids)
+		}
+	}
+	_ = at
+}
+
 // The square follows the catalogues the listener searches: a source turned
 // off is not the square's, and turning off the one showing hands the page
 // to another that has one. Its 单曲 switch is beside the point: a square is

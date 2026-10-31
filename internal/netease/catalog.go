@@ -3,22 +3,28 @@ package netease
 import (
 	"net/url"
 	"strconv"
+
+	"netease-music-mygo/internal/music"
 )
 
-// SearchType is what a search looks for.
-type SearchType int
+// SearchType is what a search looks for. The numbers are NetEase's, and
+// the kinds are every source's: which of them a source can find is what
+// its search says by refusing the rest.
+type SearchType = music.SearchKind
 
 const (
-	SearchSongs     SearchType = 1
-	SearchAlbums    SearchType = 10
-	SearchArtists   SearchType = 100
-	SearchPlaylists SearchType = 1000
-	SearchUsers     SearchType = 1002
-	SearchPodcasts  SearchType = 1009
+	SearchSongs     = music.SearchSongs
+	SearchAlbums    = music.SearchAlbums
+	SearchArtists   = music.SearchArtists
+	SearchPlaylists = music.SearchPlaylists
+	SearchUsers     = music.SearchUsers
+	SearchPodcasts  = music.SearchPodcasts
 )
 
-// SearchResult is a page of what a search found, of the one type it
-// looked for, and how many it found in all.
+// SearchResult is a page of what NetEase's own search found, of the one
+// type it looked for, and how many it found in all. It holds every kind,
+// which is NetEase's alone: the page the app shows across sources is
+// music.SearchResult, of the songs and playlists they each answer with.
 type SearchResult struct {
 	Songs     []Track
 	Albums    []AlbumProfile
@@ -73,21 +79,6 @@ func Search(query string, limit int) ([]Track, error) {
 	return res.Songs, err
 }
 
-// AlbumProfile is an album as its page shows it.
-type AlbumProfile struct {
-	Album
-	Artists     []Artist `json:"artists"`
-	PublishTime int64    `json:"publishTime"` // Unix milliseconds
-	Size        int      `json:"size"`        // how many songs it has
-	Description string   `json:"description"`
-	Songs       []Track  `json:"-"`
-}
-
-// ArtistNames joins the album's artists' names, as its credits read.
-func (al *AlbumProfile) ArtistNames() string {
-	return (&Track{Artists: al.Artists}).ArtistNames()
-}
-
 // AlbumDetail returns an album with its songs.
 func AlbumDetail(id int64) (*AlbumProfile, error) {
 	var res struct {
@@ -113,16 +104,6 @@ func ArtistAlbums(id int64, limit, offset int) ([]AlbumProfile, bool, error) {
 	q := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
 	err := get("/api/artist/albums/"+strconv.FormatInt(id, 10), q, &res)
 	return res.Albums, res.More, err
-}
-
-// User is someone on NetEase, as their page shows them.
-type User struct {
-	UserID    int64  `json:"userId"`
-	Nickname  string `json:"nickname"`
-	AvatarURL string `json:"avatarUrl"`
-	Signature string `json:"signature"`
-	Followeds int    `json:"followeds"` // their followers
-	Follows   int    `json:"follows"`
 }
 
 // UserDetail returns who a user is.

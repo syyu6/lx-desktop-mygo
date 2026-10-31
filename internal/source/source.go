@@ -71,6 +71,106 @@ type Square interface {
 	SquarePlaylists(tag string, limit, offset int) ([]music.Playlist, error)
 }
 
+// The interfaces below are the pages a source has when it has more than a
+// catalogue: what its home offers, what its charts are, and the pages a
+// song, an artist, an album and a listener open. A source answers only
+// for what it has, and the page asks by asserting the interface, as it
+// does for a square: a service with no daily songs shows no daily card
+// rather than an empty one.
+//
+// What a source will not give without an account is an error like any
+// other, and its page says so: a source may have daily songs that only a
+// listener signed in hears.
+
+// FeaturedSource is a source with playlists for its home page.
+type FeaturedSource interface {
+	Featured(limit int) ([]music.Playlist, error)
+}
+
+// Charted is a source with charts: playlists of what is played most,
+// which its home shows a few of and its charts page all.
+type Charted interface {
+	Charts() ([]music.Playlist, error)
+}
+
+// Daily is a source that picks songs for the listener each day.
+type Daily interface {
+	Daily() ([]music.Track, error)
+}
+
+// Recommended is a source that picks playlists for the listener, from
+// what they listen to: it has to know who is listening.
+type Recommended interface {
+	Recommended() ([]music.Playlist, error)
+}
+
+// Radio is a source with a station of songs it plays on and on, from the
+// listener's taste or from one song's. Modes are its own, and it says
+// which: a service may offer a station and nothing else.
+type Radio interface {
+	// RadioModes are the modes its station has, the first the one it
+	// starts on; empty for a source with none, as a station of songs it
+	// picks alone.
+	RadioModes() []music.RadioMode
+	// Radio returns a station's next songs.
+	Radio(mode string) ([]music.Track, error)
+}
+
+// ArtistPages is a source with an artist's page: who they are, what they
+// are known for, their newest songs, and their albums.
+type ArtistPages interface {
+	Artist(id int64) (*music.ArtistProfile, error)
+	// ArtistSongs returns an artist's songs: their best known, or their
+	// newest, up to limit.
+	ArtistSongs(id int64, newest bool, limit int) ([]music.Track, error)
+	ArtistAlbums(id int64, limit, offset int) ([]music.AlbumProfile, bool, error)
+}
+
+// AlbumPages is a source with an album's page.
+type AlbumPages interface {
+	Album(id int64) (*music.AlbumProfile, error)
+}
+
+// UserPages is a source with a listener's page: who they are, and the
+// playlists they made that anyone may see.
+type UserPages interface {
+	User(id int64) (*music.User, error)
+	UserPlaylists(id int64) (made, saved []music.Playlist, err error)
+}
+
+// Library is a source whose account keeps what the listener collects:
+// their own playlists, the songs they like, and changing either. The uid
+// is who is listening, as the account's own profile said: a service that
+// numbers its listeners, as both the app's do, is asked by it.
+type Library interface {
+	// Library returns the playlists the listener made, and those they
+	// saved from others.
+	Library(uid int64) (made, saved []music.Playlist, err error)
+	// LikedIDs returns the ids of the songs the listener likes. A source
+	// that likes songs without a list says so another way; this is the
+	// one NetEase and QQ Music both have.
+	LikedIDs(uid int64) ([]int64, error)
+	// Like likes or unlikes a song.
+	Like(id int64, on bool) error
+}
+
+// Comments are a source's remarks on a song: the thread naming them, the
+// pages of them, and liking them. A source that has a thread but no likes
+// returns an error for one, which its page does not offer.
+type Comments interface {
+	Thread(t music.Track) string
+	ThreadComments(thread string, offset, limit int) (*music.Comments, error)
+	LikeComment(thread string, id int64, on bool) error
+}
+
+// Extras is what a source sells or grants beyond listening: what the
+// listener bought, and what their account is.
+type Extras interface {
+	PurchasedSongs(limit, offset int) ([]music.Track, bool, error)
+	PurchasedAlbums(limit, offset int) ([]music.AlbumProfile, bool, error)
+	Membership() (music.Membership, error)
+}
+
 var (
 	// ErrNoSource is returned when no enabled source is asked.
 	ErrNoSource = errors.New("source: no source is enabled")

@@ -27,12 +27,19 @@ var httpClient = &http.Client{Timeout: 20 * time.Second}
 // The types are package music's, which the app reads across its sources:
 // these names keep the NetEase code reading as the NetEase API does, and
 // a song built here is one the app may play beside any other source's.
+// The profiles and remarks are shared with every source that has them,
+// which is what lets a page show QQ's artist beside NetEase's.
 type (
-	Artist    = music.Artist
-	Album     = music.Album
-	Track     = music.Track
-	Privilege = music.Privilege
-	ChartLine = music.ChartLine
+	Artist       = music.Artist
+	Album        = music.Album
+	Track        = music.Track
+	Privilege    = music.Privilege
+	ChartLine    = music.ChartLine
+	ArtistProfile = music.ArtistProfile
+	AlbumProfile  = music.AlbumProfile
+	User          = music.User
+	Comment       = music.Comment
+	Comments      = music.Comments
 )
 
 // withPrivileges gives tracks their privileges, matched by ID.
@@ -252,23 +259,6 @@ func SongDetails(ids []int64) ([]Track, error) {
 		out = append(out, res.Songs...)
 	}
 	return out, nil
-}
-
-// ArtistProfile is who an artist is, as their page shows them, with the
-// songs they are best known for.
-type ArtistProfile struct {
-	Artist
-	Avatar    string   `json:"img1v1Url"` // square
-	PicURL    string   `json:"picUrl"`    // wide
-	Alias     []string `json:"alias"`
-	Trans     string   `json:"trans"`
-	BriefDesc string   `json:"briefDesc"`
-	MusicSize int      `json:"musicSize"`
-	AlbumSize int      `json:"albumSize"`
-	Followed  bool     `json:"followed"` // by the listener signed in
-	// AccountID is the artist's own account, which posts their events, or 0.
-	AccountID int64   `json:"accountId"`
-	Songs     []Track `json:"-"`
 }
 
 // ArtistDetail returns an artist with their 50 most popular songs.

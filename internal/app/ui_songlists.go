@@ -36,26 +36,11 @@ const squareLimit = 36
 // listener chose, while they still ask it, and else the first one that has
 // a square.
 func (a *app) squareSource() string {
-	if a.reg == nil {
+	ids, at := sourcesWith[source.Square](a, a.squarePick)
+	if len(ids) == 0 {
 		return ""
 	}
-	if id := a.squarePick; id != "" && a.reg.Searched(id) {
-		if p, ok := a.reg.Get(id); ok {
-			if _, ok := p.(source.Square); ok {
-				return id
-			}
-		}
-	}
-	// The square is a catalogue's: a source kept for searching shows it
-	// though the app streams nothing of its own from it.
-	for _, id := range a.reg.SearchedSources() {
-		if p, ok := a.reg.Get(id); ok {
-			if _, ok := p.(source.Square); ok {
-				return id
-			}
-		}
-	}
-	return ""
+	return ids[at]
 }
 
 // loadSquare loads the square of the source chosen, its categories unless
@@ -264,35 +249,14 @@ func (a *app) songlistsHeader(c *ui.Context) {
 // squareSources switches the square between the sources that have one, as
 // the source the page shows.
 func (a *app) squareSources(c *ui.Context) {
-	var with []string
-	var labels []string
-	at := 0
-	for _, id := range a.reg.SearchedSources() {
-		p, ok := a.reg.Get(id)
-		if !ok {
-			continue
-		}
-		if _, ok := p.(source.Square); !ok {
-			continue
-		}
-		if a.square != nil && a.square.src == id {
-			at = len(with)
-		}
-		with = append(with, id)
-		labels = append(labels, p.Name())
+	ids, at := sourcesWith[source.Square](a, a.squareSource())
+	if chosen, ok := a.sourceTabs(c, "square-src", ids, at); ok {
+		// Chosen, it stays the page's, until it is turned off or taken
+		// away.
+		a.squarePick = chosen
+		a.square = &squareState{src: chosen, tag: -1}
+		a.loadSquare()
 	}
-	if len(with) < 2 {
-		return
-	}
-	ui.Row(c).Margin(0, 0, 18, 0).Children(func() {
-		if segmented(c.Key("square-src"), &at, labels...) {
-			// Chosen, it stays the page's, until it is turned off or taken
-			// away.
-			a.squarePick = with[at]
-			a.square = &squareState{src: with[at], tag: -1}
-			a.loadSquare()
-		}
-	})
 }
 
 // squareTags shows the square's categories, the one chosen lit.

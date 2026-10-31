@@ -238,6 +238,101 @@ type Lyrics struct {
 	LXLyric string
 }
 
+// ArtistProfile is who an artist is, as their page shows them, with the
+// songs they are best known for.
+type ArtistProfile struct {
+	Artist
+	Avatar    string   `json:"img1v1Url"` // square
+	PicURL    string   `json:"picUrl"`    // wide
+	Alias     []string `json:"alias"`
+	Trans     string   `json:"trans"`
+	BriefDesc string   `json:"briefDesc"`
+	MusicSize int      `json:"musicSize"`
+	AlbumSize int      `json:"albumSize"`
+	Followed  bool     `json:"followed"` // by the listener signed in
+	// AccountID is the artist's own account, which posts their events, or 0.
+	AccountID int64   `json:"accountId"`
+	Songs     []Track `json:"-"`
+}
+
+// AlbumProfile is an album as its page shows it.
+type AlbumProfile struct {
+	Album
+	Artists     []Artist `json:"artists"`
+	PublishTime int64    `json:"publishTime"` // Unix milliseconds
+	Size        int      `json:"size"`        // how many songs it has
+	Description string   `json:"description"`
+	Songs       []Track  `json:"-"`
+}
+
+// ArtistNames joins the album's artists' names, as its credits read.
+func (al *AlbumProfile) ArtistNames() string {
+	return (&Track{Artists: al.Artists}).ArtistNames()
+}
+
+// User is someone a service knows, as their page shows them.
+type User struct {
+	UserID    int64  `json:"userId"`
+	Nickname  string `json:"nickname"`
+	AvatarURL string `json:"avatarUrl"`
+	Signature string `json:"signature"`
+	Followeds int    `json:"followeds"` // their followers
+	Follows   int    `json:"follows"`
+}
+
+// Comment is what a listener wrote about a song or an episode.
+type Comment struct {
+	ID   int64 `json:"commentId"`
+	User struct {
+		ID        int64  `json:"userId"`
+		Nickname  string `json:"nickname"`
+		AvatarURL string `json:"avatarUrl"`
+	} `json:"user"`
+	Content    string `json:"content"`
+	Time       int64  `json:"time"` // Unix milliseconds
+	LikedCount int    `json:"likedCount"`
+	Liked      bool   `json:"liked"` // by the listener signed in
+	IPLocation struct {
+		Location string `json:"location"`
+	} `json:"ipLocation"`
+	// BeReplied holds the comment this one replies to.
+	BeReplied []struct {
+		User struct {
+			Nickname string `json:"nickname"`
+		} `json:"user"`
+		Content string `json:"content"`
+	} `json:"beReplied"`
+}
+
+// Comments are a page of a song's or an episode's comments.
+type Comments struct {
+	// Hot are the comments most liked, on the first page only.
+	Hot    []Comment `json:"hotComments"`
+	Latest []Comment `json:"comments"`
+	Total  int       `json:"total"`
+	More   bool      `json:"more"`
+}
+
+// Membership is what a paid account lets a listener hear, as its service
+// describes it. A source that sells none says nothing.
+type Membership string
+
+const (
+	MembershipUnknown Membership = "unknown"
+	MembershipFree    Membership = "free"
+	MembershipVIP     Membership = "vip"
+	MembershipSuper   Membership = "super"
+)
+
+// RadioMode is a way a source's station picks what it plays next, as the
+// listener chooses among them: NetEase's 推荐, 熟悉 and 探索.
+type RadioMode struct {
+	// ID is what the source calls the mode, and what it is asked by.
+	ID string
+	// Name is what the listener calls it.
+	Name string
+}
+
 // Tag is a category of playlists a source's square sorts them by: a
 // language, a style, a scene or a mood.
 type Tag struct {

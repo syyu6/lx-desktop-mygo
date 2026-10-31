@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/egoist/mygo/ui"
+
 	"netease-music-mygo/internal/kugou"
 	"netease-music-mygo/internal/kuwo"
 	"netease-music-mygo/internal/lxsource"
@@ -117,6 +119,61 @@ func (a *app) askedOn(id string, cap source.Cap) bool {
 		return id == "" || id == music.SourceNetease
 	}
 	return a.reg.Asked(id, cap)
+}
+
+// sourcesWith names the sources the listener searches that have the thing
+// a page is built on, in their order, and the source among them the page
+// shows: the one chosen while it still has it, else the first. It is what
+// a page asks before it builds, and what its tabs are made of.
+//
+// The thing is what the page is for — a square, charts, an artist's page
+// — and a source that does not have it is not offered: a page says so
+// itself rather than show an empty tab for it.
+func sourcesWith[T any](a *app, pick string) (ids []string, at int) {
+	if a.reg == nil {
+		return nil, 0
+	}
+	for _, id := range a.reg.SearchedSources() {
+		p, ok := a.reg.Get(id)
+		if !ok {
+			continue
+		}
+		if _, ok := any(p).(T); !ok {
+			continue
+		}
+		if pick == id {
+			at = len(ids)
+		}
+		ids = append(ids, id)
+	}
+	return ids, at
+}
+
+// sourceTabs shows the sources a page can show, one lit, and reports the
+// one chosen: the id of it, or empty while the pointer is elsewhere or
+// only one source has the page.
+//
+// It is drawn only when there are two: with one, the page says which in
+// its header's text, and a single tab is a control that does nothing.
+func (a *app) sourceTabs(c *ui.Context, key string, ids []string, at int) (string, bool) {
+	if len(ids) < 2 || a.reg == nil {
+		return "", false
+	}
+	labels := make([]string, len(ids))
+	for i, id := range ids {
+		if p, ok := a.reg.Get(id); ok {
+			labels[i] = shortSource(p.Name())
+		} else {
+			labels[i] = id
+		}
+	}
+	chosen := ""
+	ui.Row(c).Margin(0, 0, 18, 0).Children(func() {
+		if segmented(c.Key(key), &at, labels...) {
+			chosen = ids[at]
+		}
+	})
+	return chosen, chosen != ""
 }
 
 // sourceName is what the listener calls a source, for the pages to say
