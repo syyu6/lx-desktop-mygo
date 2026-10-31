@@ -5,13 +5,16 @@ go 1.27.3
 tool github.com/egoist/mygo/cmd/mygo
 
 require (
+	github.com/bogem/id3v2/v2 v2.1.4
 	github.com/ebitengine/purego v0.11.1
-	github.com/egoist/mygo v0.7.1-0.20261027023711-da3657e7f86a
+	github.com/egoist/mygo v0.7.3
+	github.com/go-flac/go-flac/v2 v2.0.4
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/llehouerou/go-faad2 v0.3.0
 	github.com/mewkiz/flac v1.0.14
 	github.com/tphakala/go-aac v0.7.1
 	golang.org/x/image v0.46.0
+	golang.org/x/text v0.43.0
 	modernc.org/quickjs v0.27.0
 	rsc.io/qr v0.2.0
 )
@@ -30,7 +33,6 @@ require (
 	github.com/tphakala/simd v1.11.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/libquickjs v0.14.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
