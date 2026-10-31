@@ -1,12 +1,9 @@
 package player
 
 import (
-	"context"
 	"errors"
 	"io"
 	"math"
-
-	"github.com/llehouerou/go-faad2"
 )
 
 // adtsStream decodes a bare AAC download for package audio: the ADTS a
@@ -18,8 +15,7 @@ import (
 // length puts it at, found there by its sync word.
 type adtsStream struct {
 	dl   *download
-	dec  *faad2.Decoder
-	ctx  context.Context
+	dec  aacDecoder
 	rate int
 	ch   int
 
@@ -40,11 +36,6 @@ func openADTSStream(dl *download, durationMs int64) (*adtsStream, error) {
 	if !ok {
 		return nil, ErrUnsupportedFormat
 	}
-	ctx := context.Background()
-	dec, err := faad2.NewDecoder(ctx)
-	if err != nil {
-		return nil, err
-	}
 	// The AudioSpecificConfig an ADTS header spells out: 5 bits of object
 	// type, 4 of sampling rate, 4 of channels, then the frame's own flags,
 	// all clear.
@@ -53,17 +44,17 @@ func openADTSStream(dl *download, durationMs int64) (*adtsStream, error) {
 		byte(h.rate&1)<<7 | byte(h.channels&0xF)<<3,
 		0,
 	}
-	if err := dec.Init(ctx, asc); err != nil {
-		dec.Close(ctx)
+	dec, err := newAACDecoder(asc)
+	if err != nil {
 		return nil, err
 	}
 	s := &adtsStream{
-		dl: dl, dec: dec, ctx: ctx, start: start,
-		rate: int(dec.SampleRate()), ch: int(dec.Channels()),
+		dl: dl, dec: dec, start: start,
+		rate: dec.SampleRate(), ch: dec.Channels(),
 		closeM: make(chan struct{}),
 	}
 	if s.rate == 0 {
-		dec.Close(ctx)
+		dec.Close()
 		return nil, ErrUnsupportedFormat
 	}
 	// The header says how many channels there are; what the decoder says
@@ -88,7 +79,7 @@ func (s *adtsStream) Close() error {
 	case <-s.closeM:
 	default:
 		close(s.closeM)
-		s.dec.Close(s.ctx)
+		s.dec.Close()
 		s.drop()
 	}
 	return nil
@@ -171,7 +162,7 @@ func (s *adtsStream) next() error {
 	if at > len(frame) {
 		return io.EOF
 	}
-	pcm, err := s.dec.Decode(s.ctx, frame[at:])
+	pcm, err := s.dec.Decode(frame[at:])
 	if err != nil {
 		// A frame the decoder will not take is skipped: the rest of the
 		// song plays.

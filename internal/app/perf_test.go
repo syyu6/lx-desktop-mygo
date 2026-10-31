@@ -53,6 +53,23 @@ func framesAt(a *app, tt *ui.Tester, pos time.Duration) int {
 	return asked
 }
 
+// An app that is not the active one asks for no frames of its own: the
+// window is behind another's, and a frame drawn then is one nobody sees,
+// which the window only gives back once it has drawn nothing for a while.
+func TestBackgroundAppAsksForNoFrames(t *testing.T) {
+	a, tt, _ := playingApp()
+	a.settings.Smoke = true
+	a.nowPlaying, a.npPane = true, paneStage
+	a.focused = false
+	if n := framesAt(a, tt, 12*time.Second); n > 1 {
+		t.Errorf("the stage while the app is in the background: %d frames a second", n)
+	}
+	a.focused = true
+	if n := framesAt(a, tt, 12*time.Second); n < 2 {
+		t.Errorf("the stage once the app is active again: %d frames a second", n)
+	}
+}
+
 // Now Playing asks for frames only as fast as what it shows changes. The
 // Tester runs timers as it settles a frame, so this counts only what does
 // not change for a while: a frame log of the app (MYGO_FRAME_STATS) measures

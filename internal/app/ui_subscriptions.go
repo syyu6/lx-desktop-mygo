@@ -267,6 +267,49 @@ func (a *app) subscribeSources() []string {
 	return srcs
 }
 
+// platformChips chooses one of srcs, ids of sources with "" for the link's
+// own, in a row that wraps: the one chosen is filled with the accent, as
+// the square's categories are, and the others wait in the hover's gray.
+//
+// They wrap rather than sit in one fixed-width row as a segmented control
+// does: the sources are as many as the listener asks, and their names do
+// not fit six across a dialog. Each is named shortly, as the search bar's
+// badges name them, so that the row stays a row or two of chips rather than
+// a wall of service names.
+func (a *app) platformChips(c *ui.Context, key any, srcs []string, chosen *string, choose func(src string)) {
+	p := a.pal
+	ui.Row(c.Key(key)).Wrap().Gap(8).GapY(8).Children(func() {
+		for _, id := range srcs {
+			label := "按链接识别"
+			if id != "" {
+				label = shortSource(a.reg.Name(id))
+			}
+			on := id == *chosen
+			// Each chip a key of its own: a dialog built twice, as it is
+			// redrawn, must find the same ones.
+			b := ui.ButtonBase(c.Key(struct {
+				key any
+				src string
+			}{key, id})).Height(28).PaddingX(12).Radius(14).FocusRing(false).Label(label)
+			color := p.muted
+			switch {
+			case on:
+				b.Background(p.accent)
+				color = p.onAccent
+			case b.Hovered():
+				b.Background(p.hover)
+				color = p.text
+			}
+			b.Children(func() {
+				ui.Text(c, label).FontSize(12.5).FontWeight(500).TextColor(color).SingleLine()
+			})
+			if b.Clicked() && !on {
+				choose(id)
+			}
+		}
+	})
+}
+
 // subscribeDialogView is the dialog that follows a playlist by its link.
 func (a *app) subscribeDialogView(c *ui.Context) {
 	p := a.pal
@@ -280,20 +323,15 @@ func (a *app) subscribeDialogView(c *ui.Context) {
 		ui.Text(c, "粘贴歌单的链接或编号，歌单会保存在本机，之后打开不必再等它加载。").
 			FontSize(12.5).TextColor(p.muted).LineHeight(1.45)
 		srcs := a.subscribeSources()
-		at := 0
-		var labels []string
-		for i, id := range srcs {
-			if id == d.src {
-				at = i
-			}
-			if id == "" {
-				labels = append(labels, "按链接识别")
-				continue
-			}
-			labels = append(labels, a.reg.Name(id))
-		}
-		if len(srcs) > 1 && segmented(c.Key("subscribe-src"), &at, labels...) {
-			d.src, d.err = srcs[at], ""
+		if len(srcs) > 1 {
+			// The platforms wrap rather than run in one row: there are as
+			// many as there are sources the listener asks, and their names
+			// are longer than a segmented control of fixed segments leaves
+			// room for — six of them came to half again the dialog's width
+			// and drew out past its edge.
+			a.platformChips(c, c.Key("subscribe-src"), srcs, &d.src, func(src string) {
+				d.src, d.err = src, ""
+			})
 		}
 		in := ui.TextInput(c.Key("subscribe-link"), &d.text).Placeholder("https://… 或歌单编号").Label("歌单链接").FontSize(13).AutoFocus()
 		if in.Submitted() {

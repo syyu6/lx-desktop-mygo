@@ -222,7 +222,7 @@ func (a *app) commentsPane(c *ui.Context, tr *netease.Track) {
 			// Being found on NetEase, by name: the same skeleton a loading
 			// thread shows, as it is a moment either way.
 			ui.Column(c).Grow(1).Padding(4, 8, 0, 0).Gap(2).Children(func() {
-				s := npShimmer(c)
+				s := a.npShimmer(c)
 				s.text(c, 13, 1.3).Width(56).Margin(18, 12, 6, 12)
 				commentSkeleton(c, s, 6)
 			})
@@ -238,7 +238,7 @@ func (a *app) commentsPane(c *ui.Context, tr *netease.Track) {
 	if len(cs.hot) == 0 && len(cs.latest) == 0 {
 		if cs.loading || !cs.loaded && cs.err == "" {
 			ui.Column(c).Grow(1).Padding(4, 8, 0, 0).Gap(2).Children(func() {
-				s := npShimmer(c)
+				s := a.npShimmer(c)
 				s.text(c, 13, 1.3).Width(56).Margin(18, 12, 6, 12)
 				commentSkeleton(c, s, 6)
 			})
@@ -274,7 +274,7 @@ func (a *app) commentsPane(c *ui.Context, tr *netease.Track) {
 				a.commentRow(c.Key(commentKey{false, cs.latest[i].ID}), &cs.latest[i], now)
 			}
 			if cs.loading {
-				commentSkeleton(c.Key("more"), npShimmer(c), 2)
+				commentSkeleton(c.Key("more"), a.npShimmer(c), 2)
 			}
 			ui.Row(c.Key("foot")).Height(56).Center().Children(func() {
 				switch {

@@ -61,11 +61,11 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 	ours, playing := a.dailyPlaying()
 
 	// The cover's colors, eased in as it loads — or, following the player,
-	// the playing song's, so that the card is the window's and not a color
-	// of its own.
+	// the window's own, which the palette is already blending from one song
+	// to the next: the card takes them rather than easing after them, so
+	// that it changes with the page and the sidebar instead of a little
+	// behind them.
 	deep, rich, glow := a.dailyColors(art)
-	fade := ui.Animation{Duration: 600 * time.Millisecond}
-	deep, rich, glow = card.AnimateColor("deep", deep, fade), card.AnimateColor("rich", rich, fade), card.AnimateColor("glow", glow, fade)
 	card.Background(deep)
 	lift := card.AnimateTo("lift", b2f(hovered), ui.Snappy)
 	card.Shadow(0, 14+8*lift, 34+12*lift, -14, a.pal.cardShade)
@@ -102,7 +102,7 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
 			spin := &a.dailySpin
 			if spin.step(p.Now(), turn) {
-				p.AnimationFrameRate(dailyRate)
+				a.rate(p, dailyRate)
 			}
 			// Where the record turns: at the right, in its sleeve's stack.
 			cx := r.X + r.W - dailyPadX - 120
@@ -187,11 +187,11 @@ func dailyColors(tint ui.Color) (deep, rich, glow ui.Color) {
 }
 
 // dailyColors returns the card's colors: the day's first cover's, or while
-// the appearance follows the player, the playing song's, which the card
-// takes as the window does.
+// the appearance follows the player, the ones the window's palette already
+// carries, blended from one song to the next with the rest of it.
 func (a *app) dailyColors(art *artwork) (deep, rich, glow ui.Color) {
-	if a.pal.immersive {
-		return dailyColors(a.tint)
+	if a.pal.immersive && a.pal.dailyKnown {
+		return a.pal.dailyDeep, a.pal.dailyRich, a.pal.dailyGlow
 	}
 	if art == nil || art.failed {
 		return dailyColors(ui.Color{})
@@ -340,7 +340,7 @@ func (a *app) dailyPlayButton(c *ui.Context, songs []netease.Track, ours, playin
 				a.dailyBars.step(p.Now(), lv, live)
 				drawBars(p, r, &a.dailyBars, 4, accent, 2.5)
 				if live || a.dailyBars.group(0, player.Bands) > 0.01 {
-					p.AnimationFrameRate(dailyRate)
+					a.rate(p, dailyRate)
 				}
 			})
 		} else {

@@ -110,18 +110,37 @@ type settings struct {
 	Sidebar       float32 `json:"sidebar,omitempty"`
 	SidebarHidden bool    `json:"sidebarHidden,omitempty"`
 	SidebarRail   bool    `json:"sidebarRail,omitempty"`
+	// Version is the shape the settings were last written in, for the
+	// changes whose migration must happen once and then leave the
+	// listener's own choice alone. Settings written before it carries
+	// none.
+	Version int `json:"version,omitempty"`
 
 	path string // where they were loaded from, and are saved to
 }
 
 func defaultSettings() settings {
-	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, Prefetch: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
+	// The player's colors are the app's of its own: a fresh install follows
+	// the song that plays, and falls back to the system's colors while
+	// nothing does.
+	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "cover", Volume: 0.8, Normalize: true, Prefetch: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
 }
 
 // migrate folds the settings an older version kept into the shape this one
 // reads: a source's search switch and its music switch were two, and are
 // one now, a source turned off for either being off for its songs.
 func (s *settings) migrate() {
+	// The appearance follows the player by default now, where it used to
+	// follow the system. A settings file written before that is moved over
+	// once — "system" was the old default, so it is far more likely never
+	// chosen than picked on purpose — and from then on the version is
+	// written and the listener's own choice is kept, whatever it is.
+	if s.Version < 1 {
+		if s.Appearance == "" || s.Appearance == "system" {
+			s.Appearance = "cover"
+		}
+		s.Version = 1
+	}
 	if len(s.SearchOff) == 0 {
 		return
 	}

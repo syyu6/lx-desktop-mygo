@@ -419,6 +419,8 @@ func (n *notch) levels(c *ui.Context, tr *netease.Track, w, h float32, count int
 		lv, live := a.pl.Levels()
 		n.bars.step(p.Now(), lv, live)
 		drawBars(p, r, &n.bars, count, color, 2.5)
+		// The notch shows over every app, so its bars move while it
+		// does, whatever has the keyboard.
 		if live || n.bars.group(0, player.Bands) > 0.01 {
 			p.AnimationFrame()
 		}

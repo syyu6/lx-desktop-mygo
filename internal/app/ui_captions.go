@@ -55,7 +55,7 @@ func (a *app) captionsPane(c *ui.Context, tr *netease.Track, h float32) {
 	if cur >= 0 && pos >= lines[cur].End && a.captionsWriting(pos) {
 		cur = -1
 	}
-	if pl.Playing() {
+	if pl.Playing() && a.focused {
 		if i := lyrics.Index(lines, pos); i+1 < len(lines) {
 			c.After(lines[i+1].At - pos + 20*time.Millisecond)
 		}
@@ -64,7 +64,7 @@ func (a *app) captionsPane(c *ui.Context, tr *netease.Track, h float32) {
 		a.lyricTrack, a.lyricAt = tr.ID, -2
 		a.lyricScroll, a.lyricGlide = ui.ScrollState{}, lyricGlide{}
 	}
-	lag := a.lyricGlide.step(c, &a.lyricScroll)
+	lag := a.lyricGlide.step(a, c, &a.lyricScroll)
 	scroll := ui.Scroll(c.Key("captions")).Grow(1).TrackScroll(&a.lyricScroll).Padding(0, 8, h*0.5, 0)
 	a.timedLines(c, scroll, lines, pos, cur, lag, linesStyle{size: 24, weight: 700, lineHeight: 1.4}, func() {
 		if cs.work != nil {

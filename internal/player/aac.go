@@ -1,14 +1,11 @@
 package player
 
 import (
-	"context"
 	"encoding/binary"
 	"errors"
 	"io"
 	"math"
 	"sync"
-
-	"github.com/llehouerou/go-faad2"
 )
 
 // aacStream decodes an MP4 (m4a) download for package audio: the AAC that
@@ -22,8 +19,7 @@ import (
 type aacStream struct {
 	dl   *download
 	idx  *mp4Index
-	dec  *faad2.Decoder
-	ctx  context.Context
+	dec  aacDecoder
 	rate int
 	ch   int // the song's own channels: 1 is played as stereo
 
@@ -74,18 +70,13 @@ func openAACStream(dl *download, durationMs int64) (*aacStream, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.Background()
-	dec, err := faad2.NewDecoder(ctx)
+	dec, err := newAACDecoder(idx.asc)
 	if err != nil {
 		return nil, err
 	}
-	if err := dec.Init(ctx, idx.asc); err != nil {
-		dec.Close(ctx)
-		return nil, err
-	}
-	s := &aacStream{dl: dl, idx: idx, dec: dec, ctx: ctx, drop: dl.Close}
-	s.rate = int(dec.SampleRate())
-	s.ch = int(dec.Channels())
+	s := &aacStream{dl: dl, idx: idx, dec: dec, drop: dl.Close}
+	s.rate = dec.SampleRate()
+	s.ch = dec.Channels()
 	if s.rate == 0 {
 		s.rate = idx.rate
 	}
@@ -117,7 +108,7 @@ func (s *aacStream) source() (*download, *spectrum) { return s.dl, s.spec }
 
 func (s *aacStream) Close() error {
 	s.closeM.Do(func() {
-		s.dec.Close(s.ctx)
+		s.dec.Close()
 		s.drop()
 	})
 	return nil
@@ -155,7 +146,7 @@ func (s *aacStream) next() error {
 		return err
 	}
 	s.at++
-	pcm, err := s.dec.Decode(s.ctx, frame)
+	pcm, err := s.dec.Decode(frame)
 	if err != nil {
 		// A frame the decoder will not take is skipped, as Music does:
 		// the rest of the song plays.

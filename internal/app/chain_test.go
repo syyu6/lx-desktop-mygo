@@ -232,48 +232,155 @@ func TestSearchFieldFollowsTheSidebar(t *testing.T) {
 	}
 }
 
-// The sidebar folds to a rail of icons from the one toggle at the window's
-// top right, which stays there as the sidebar folds and unfolds, while the
-// search keeps its place at the strip's start.
-func TestSidebarToggleIsAtTheTopRight(t *testing.T) {
+// The sidebar folds to a rail of icons from the one toggle at its foot, and
+// the foot's other controls stay with it: the picture, the settings and the
+// fold, in that order, as the sidebar goes from whole to rail and back.
+func TestSidebarToggleIsAtTheFoot(t *testing.T) {
 	a := chainTestApp(t)
 	a.art = newArtCache(func(func()) {})
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
-	search, ok := tt.Find("搜索")
-	if !ok {
-		t.Fatal("no search field")
-	}
 	fold, ok := tt.Find("折叠侧边栏")
 	if !ok {
 		t.Fatal("no fold button")
 	}
-	if fold.X <= search.X {
-		t.Errorf("the fold is at X=%v, the search at %v: it is not to its right", fold.X, search.X)
+	if fold.Y+fold.H < 800-playerBarHeight-24 {
+		t.Errorf("the fold is at Y=%v of 800: it is not at the sidebar's foot", fold.Y)
 	}
-	if fold.X+fold.W < 1100 {
-		t.Errorf("the fold ends at X=%v, not at the window's right", fold.X+fold.W)
+	// It is in the sidebar, not at the window's top right where it was.
+	if fold.X+fold.W > sidebarWidth+80 {
+		t.Errorf("the fold ends at X=%v, past the sidebar's %d", fold.X+fold.W, sidebarWidth)
 	}
-	// Folded, the way back is in the same place: one toggle, one place, as
-	// the sidebar goes from whole to rail and back.
+	// Folded, the way back is the same toggle at the foot, now a column:
+	// it stays in the foot, where the pointer left it.
+	railFold := fold
 	a.sideRail = true
 	tt.Frame()
 	open, ok := tt.Find("展开侧边栏")
 	if !ok {
 		t.Fatal("no unfold button")
 	}
-	if open.X != fold.X || open.Y != fold.Y {
-		t.Errorf("the unfold is at %+v, the fold at %+v: it moved", open, fold)
+	if open.Y+open.H < 800-playerBarHeight-24 {
+		t.Errorf("folded, the unfold is at Y=%v: it left the foot", open.Y)
 	}
-	// Hidden, the same toggle brings the sidebar back.
+	if open.X+open.W > railWidth+80 {
+		t.Errorf("folded, the unfold ends at X=%v, outside the rail", open.X+open.W)
+	}
+	if open.Y == railFold.Y && open.X == railFold.X {
+		t.Error("folded, the unfold did not move into the rail's column")
+	}
+	// The strip over the page holds no toggle while the sidebar shows.
+	if _, ok := tt.Find("显示侧边栏"); ok {
+		t.Error("the page strip shows a toggle while the sidebar does")
+	}
+	// Hidden, the sidebar has no foot to hold it: the same toggle is the
+	// page strip's, to bring it back.
 	a.sideRail, a.sideHidden = false, true
 	tt.Frame()
 	show, ok := tt.Find("显示侧边栏")
 	if !ok {
 		t.Fatal("no button to show the sidebar again")
 	}
-	if show.X != fold.X || show.Y != fold.Y {
-		t.Errorf("the way back is at %+v, the fold at %+v: it moved", show, fold)
+	if show.Y > topBarHeight {
+		t.Errorf("the way back is at Y=%v, below the page's strip", show.Y)
+	}
+	if err := tt.Click("显示侧边栏"); err != nil {
+		t.Fatalf("the way back: %v", err)
+	}
+	tt.Frame()
+	if a.sideHidden {
+		t.Error("the toggle did not bring the sidebar back")
+	}
+}
+
+// The sidebar's foot holds the listener's picture, the settings and the
+// fold, in that order, folded and unfolded: folded, they stack, since three
+// buttons do not fit across a rail.
+func TestSidebarFootHoldsTheAccountAndTheSettings(t *testing.T) {
+	for _, rail := range []bool{false, true} {
+		a := chainTestApp(t)
+		a.art = newArtCache(func(func()) {})
+		a.sideRail = rail
+		tt := ui.NewTester(a.view, 1200, 800)
+		tt.Frame()
+		acc, ok := tt.Find("登录")
+		if !ok {
+			t.Fatalf("rail %v: the foot has no way to sign in", rail)
+		}
+		set, ok := tt.Find("设置")
+		if !ok {
+			t.Fatalf("rail %v: the foot has no settings", rail)
+		}
+		foldLabel, openLabel := "折叠侧边栏", "展开侧边栏"
+		if rail {
+			foldLabel, openLabel = openLabel, foldLabel
+		}
+		fold, ok := tt.Find(foldLabel)
+		if !ok {
+			t.Fatalf("rail %v: the foot has no fold", rail)
+		}
+		// The three are the foot's own: they are below the pages.
+		if nav, ok := tt.Find("为你推荐"); ok && acc.Y <= nav.Y {
+			t.Errorf("rail %v: the picture is at Y=%v, above the pages at %v", rail, acc.Y, nav.Y)
+		}
+		// In one row unfolded, in one column folded, each above the fold.
+		switch {
+		case rail:
+			if acc.Y >= set.Y || set.Y >= fold.Y {
+				t.Errorf("folded, the foot is not stacked picture, settings, fold: %v %v %v", acc.Y, set.Y, fold.Y)
+			}
+		default:
+			if acc.X >= set.X || set.X >= fold.X {
+				t.Errorf("unfolded, the foot is not picture, settings, fold across: %v %v %v", acc.X, set.X, fold.X)
+			}
+			if set.Y != acc.Y {
+				t.Errorf("unfolded, the foot's controls are not on one row: %v and %v", acc.Y, set.Y)
+			}
+		}
+		if got, want := a.sideRail, rail; got != want {
+			t.Errorf("the frame went on without the fold: %v, want %v", got, want)
+		}
+	}
+}
+
+// A listener who is signed in finds their own page, the settings and signing
+// out behind their picture at the foot of the sidebar, which names them
+// without taking the room a name would.
+func TestThePictureOpensTheAccountMenu(t *testing.T) {
+	a := chainTestApp(t)
+	a.art = newArtCache(func(func()) {})
+	a.profile = &netease.Profile{UserID: 1, Nickname: "小明"}
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	// The picture says who it is, and the sidebar shows no name for it.
+	if _, ok := tt.Find("小明"); !ok {
+		t.Fatal("the foot has no picture of the listener")
+	}
+	if n := searchFields(tt); n != 1 {
+		t.Errorf("the sidebar shows %d searches", n)
+	}
+	if err := tt.Click("小明"); err != nil {
+		t.Fatalf("the picture: %v", err)
+	}
+	tt.Frame()
+	for _, item := range []string{"我的主页", "设置…", "退出登录"} {
+		if _, ok := tt.Find(item); !ok {
+			t.Errorf("the account menu has no %q", item)
+		}
+	}
+	// Signing out takes the menu with it, and the way in is back.
+	if err := tt.Click("退出登录"); err != nil {
+		t.Fatalf("signing out: %v", err)
+	}
+	tt.Frame()
+	if a.profile != nil {
+		t.Error("the listener is still signed in")
+	}
+	if _, ok := tt.Find("登录"); !ok {
+		t.Error("the foot has no way back in")
+	}
+	if a.accountOpen {
+		t.Error("the menu stayed open after signing out")
 	}
 }
 

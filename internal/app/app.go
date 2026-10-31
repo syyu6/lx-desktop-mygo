@@ -61,6 +61,11 @@ type app struct {
 	art   *artCache
 	pl    *player.Player
 	pal   palette
+	// focused says whether the app is the active one, as the system told
+	// it: while it is not, nothing the window shows moves on its own, and
+	// the frames it would have asked for are left to the system, which
+	// gives back what drawing them took.
+	focused bool
 
 	route   route
 	history []route
@@ -119,6 +124,7 @@ type app struct {
 	npPane      int       // paneLyrics, paneQueue, paneStage, paneComments, paneProgram or paneCaptions
 	npPaneTop   float32   // how far the cover beside the pane starts below its top
 	npTabsH     float32   // how tall the pane's tabs were, last laid out
+	lyricAwake  bool      // the glide stops where the lyrics are, once drawn
 	lyricScroll ui.ScrollState
 	lyricGlide  lyricGlide
 	lyricAt     int
@@ -201,11 +207,14 @@ type app struct {
 	chain *source.Chain
 	// sideWidth is how wide the sidebar shows, which the listener drags its
 	// edge to change; sideHidden whether it shows at all; sideRail whether
-	// it shows folded to a rail of icons, which the one fold at its head
+	// it shows folded to a rail of icons, which the fold at its foot
 	// changes.
 	sideWidth  float32
 	sideHidden bool
 	sideRail   bool
+	// accountOpen says the listener's own menu is dropped up from their
+	// picture at the foot of the sidebar.
+	accountOpen bool
 	// railFrame is sideRail as the frame being built sees it: the fold
 	// takes effect on the next frame, so that everything laid out within
 	// this one agrees on whether the rail is there.
@@ -313,6 +322,7 @@ func Run() error {
 		lyricAt:    -1,
 		queueAt:    -1,
 		cacheUsed:  -1,
+		focused:    true,
 	}
 	moveOldData()
 	a.useUpdater()
@@ -383,6 +393,24 @@ func Run() error {
 		a.win.OnHide(a.syncDock)
 		// Shown or switched to the morning after, it shows the new day's.
 		a.win.OnFocus(a.freshenHome)
+		// Nothing in the window moves on its own while the app is not the
+		// active one: the pointer is elsewhere, and the levels, the record
+		// and the smoke would only ask for frames to show what nobody is
+		// looking at. The frame that shows the window again draws whole.
+		mygo.App.OnDidBecomeActive(func() {
+			old := a.focused
+			a.focused = true
+			if a.win != nil {
+				a.win.Invalidate()
+			}
+			// The glide stopped when the app left the screen, and the
+			// lyrics have moved on since: it settles where they are now
+			// rather than sliding in as the window shows again.
+			if !old && a.npOpen {
+				a.lyricAwake = true
+			}
+		})
+		mygo.App.OnDidResignActive(func() { a.focused = false })
 		a.applyTray()
 		if shotHook != nil {
 			shotHook(a)

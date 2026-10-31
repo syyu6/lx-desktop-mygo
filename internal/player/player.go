@@ -561,6 +561,13 @@ const normPreamp = 4
 
 // normGain is the gain that brings a track as loud as others, as NetEase
 // measured it, but never so loud that its peaks would clip.
+//
+// A track whose peak is unknown is only ever made quieter: the preamp lifts
+// tracks to the loudness music plays elsewhere, and without the peak there
+// is nothing to say the lift would not run past full scale, which the mixer
+// clips hard. Songs already at 0 dBFS are common, and a source that tells
+// nothing of a track's loudness (a script's, an older cache entry) would
+// otherwise be lifted five decibels over everything else.
 func normGain(st *netease.Stream) float64 {
 	if st == nil || st.Gain == 0 && st.Peak == 0 {
 		return 1
@@ -568,6 +575,8 @@ func normGain(st *netease.Stream) float64 {
 	g := math.Pow(10, (st.Gain+normPreamp)/20)
 	if st.Peak > 0 {
 		g = min(g, 1/st.Peak)
+	} else {
+		g = min(g, 1)
 	}
 	return g
 }
@@ -813,13 +822,14 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 func (p *Player) open(t netease.Track, level string, ahead bool) (*netease.Stream, stream, string, error) {
 	// The cache names a song by its source and its id there, so that two
 	// sources' songs of one number stay apart.
-	if t.Src() == music.SourceNetease {
-		if f, info, ok := p.Cache.lookup(t.ID, level); ok {
+	name := cacheName(t)
+	if name != "" {
+		if f, info, ok := p.Cache.lookup(name, level); ok {
 			s, err := openStream(f, t.Duration)
 			if err == nil {
 				// What the cache keeps is the song's own, from its own
 				// source.
-				return info, s, music.SourceNetease, nil
+				return info, s, t.Src(), nil
 			}
 			f.Close()
 		}
@@ -840,17 +850,19 @@ func (p *Player) open(t netease.Track, level string, ahead bool) (*netease.Strea
 		}
 		// What a source other than the song's own gives is not kept: the
 		// cache's name is the song's own, and a stream found elsewhere may
-		// be a different recording.
+		// be a different recording. Either way the song comes into a file
+		// rather than into memory, and the one the cache keeps comes into
+		// the cache's own.
 		var dl *download
 		switch {
-		case served == music.SourceNetease:
-			dl = p.Cache.download(t.ID, info)
+		case served == t.Src() && name != "":
+			dl = p.Cache.download(name, info)
 		case ahead:
 			// Waiting for its turn behind a song that plays: in a file,
-			// not in memory.
+			// which goes when the song does.
 			dl = p.Cache.downloadAhead(info)
 		default:
-			dl = p.Cache.downloadUncached(info)
+			dl = p.Cache.download("", info)
 		}
 		s, err := openStream(dl, t.Duration)
 		if err == nil {

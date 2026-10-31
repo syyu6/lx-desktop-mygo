@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,8 +205,53 @@ func TestSubscriptionOf(t *testing.T) {
 	}
 }
 
-// A playlist is followed from its link alone, its service named by the
-// link, and one of NetEase's is not: those are the account's.
+// The dialog's platforms stay inside it with every source the app asks on:
+// laid out as one row of fixed segments they came to more than twice the
+// dialog's width and drew out past its edge, so they wrap now.
+func TestThePlatformRowStaysInTheDialog(t *testing.T) {
+	a := chainTestApp(t)
+	a.art = newArtCache(func(func()) {})
+	a.openSubscribeDialog()
+	for _, w := range []int{900, 1280} {
+		tt := ui.NewTester(a.view, w, 700)
+		tt.Frame()
+		srcs := a.subscribeSources()
+		if len(srcs) < 5 {
+			t.Fatalf("%d sources: too few to test the row", len(srcs))
+		}
+		var widest, left float32
+		for _, prefix := range []string{"按链接识别", "网易云", "酷我", "酷狗", "QQ", "咪咕"} {
+			// The row names each source shortly; a longer name is the same
+			// chip, so match by its start rather than its whole.
+			label := ""
+			for _, s := range tt.Texts() {
+				if strings.HasPrefix(s, prefix) && (label == "" || len(s) < len(label)) {
+					label = s
+				}
+			}
+			if label == "" {
+				t.Fatalf("%d wide: the row has no %q", w, prefix)
+			}
+			r, ok := tt.Find(label)
+			if !ok {
+				t.Fatalf("%d wide: %q has no place", w, label)
+			}
+			widest = max(widest, r.X+r.W)
+			if r.X < left || left == 0 {
+				left = r.X
+			}
+		}
+		// The dialog is 430 wide, centred: its inner edge is what matters,
+		// and the row must not reach past the panel's right padding.
+		panel := (float32(w) - 430) / 2
+		if inner := panel + 430 - 24; widest > inner {
+			t.Errorf("%d wide: the platforms end at X=%v, past the dialog's %v", w, widest, inner)
+		}
+		if left < panel+24 {
+			t.Errorf("%d wide: the platforms start at X=%v, left of the dialog's %v", w, left, panel+24)
+		}
+	}
+}
 func TestFollowALink(t *testing.T) {
 	// Kuwo, which reads its playlists from its links.
 	f := &fakePlays{src: music.SourceKuwo, pl: &music.Playlist{Source: music.SourceKuwo, ID: 12, Name: "通勤"}}

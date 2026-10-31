@@ -294,7 +294,7 @@ func (a *app) settingsView(c *ui.Context) {
 					ui.Column(c).Padding(12, 16).Gap(10).Children(func() {
 						ui.Column(c).Gap(3).Children(func() {
 							ui.Text(c, "外观").FontSize(13.5).FontWeight(500)
-							ui.Text(c, "跟随播放器时，主界面与正在播放页融为一体，随正在播放的歌曲封面着色；没有歌曲时跟随系统").
+							ui.Text(c, "跟随播放器时，主界面与正在播放页融为一体，随正在播放的歌曲封面着色（默认）；没有歌曲时跟随系统").
 								FontSize(12).TextColor(p.muted).LineHeight(1.4)
 						})
 						modes := []string{"system", "light", "dark", "cover"}

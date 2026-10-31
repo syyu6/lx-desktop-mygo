@@ -14,9 +14,8 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
-// The account lives in the settings, beside the sources it plays from: the
-// sidebar keeps none of it, so that nothing at its foot is a button the
-// listener did not ask for.
+// The account is in the settings, beside the sources it plays from, and the
+// sidebar's foot has the way in as well, by the listener's picture alone.
 func TestSignInIsInTheSettings(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
@@ -30,13 +29,15 @@ func TestSignInIsInTheSettings(t *testing.T) {
 	if _, ok := tt.Find("网易云音乐账号"); !ok {
 		t.Error("the account's group is not in the settings")
 	}
-	// And the sidebar has nothing of the account, signed in or not.
+	// And the sidebar's foot signs in too, from a picture rather than a
+	// row that names the service.
 	main := ui.NewTester(a.view, 1000, 700)
 	main.Frame()
-	for _, s := range main.Texts() {
-		if s == "登录网易云音乐" || s == "登录" {
-			t.Errorf("the sidebar still shows a sign-in: %q", s)
-		}
+	if _, ok := main.Find("登录"); !ok {
+		t.Error("the sidebar's foot has no way to sign in")
+	}
+	if _, ok := main.Find("登录网易云音乐"); ok {
+		t.Error("the sidebar still names the sign-in in a row")
 	}
 }
 

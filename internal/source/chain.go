@@ -280,8 +280,11 @@ func streamFrom(l Link, t music.Track, level string) (*music.Stream, bool) {
 		return nil, false
 	}
 	// What a script gives is not known until its first bytes come: the
-	// player reads the format and the length for itself.
-	return &music.Stream{URL: url, Level: level, Gain: 1}, true
+	// player reads the format and the length for itself. Nothing is known
+	// of how loud it is either, so it plays as it came, with no gain at
+	// all: a gain of 1 here would be read as the dB to lift it by, five
+	// decibels over the preamp, and clip what is already at full scale.
+	return &music.Stream{URL: url, Level: level}, true
 }
 
 // ResolveLyrics returns t's words and their translation, asking the

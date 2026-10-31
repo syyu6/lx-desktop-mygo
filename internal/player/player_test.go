@@ -153,6 +153,14 @@ func TestNormGain(t *testing.T) {
 		// Quiet, it is lifted, but not past its peak.
 		{&netease.Stream{Gain: 3, Peak: 0.8}, 1.25},
 		{&netease.Stream{Gain: -4, Peak: 0}, 1},
+		// A track's peak not known, it is never lifted: this was the shape
+		// of every script's songs, at 10^(5/20), clipping what was already
+		// at full scale.
+		{&netease.Stream{Gain: 1, Peak: 0}, 1},
+		// Known quiet enough for the lift, the preamp still lifts it; a
+		// peak that leaves no room gets only what it has.
+		{&netease.Stream{Gain: 0, Peak: 0.3}, 1.5848931924611136},
+		{&netease.Stream{Gain: 0, Peak: 0.9}, 1 / 0.9},
 	} {
 		if g := normGain(c.st); math.Abs(g-c.want) > 1e-9 {
 			t.Errorf("%+v: %v, want %v", c.st, g, c.want)
@@ -165,31 +173,31 @@ func TestNormGain(t *testing.T) {
 func TestCache(t *testing.T) {
 	dir := t.TempDir()
 	c := NewCache(dir, 400)
-	store := func(id int64, st *netease.Stream, n int) {
+	store := func(id string, st *netease.Stream, n int) {
 		f := c.part(st)
 		f.Write(make([]byte, n))
 		f.Close()
 		c.keep(id, st, f.Name(), int64(n))
 	}
-	store(1, &netease.Stream{Level: "lossless", Type: "flac", Gain: -3}, 100)
-	dl, st, ok := c.lookup(1, "exhigh")
+	store("1", &netease.Stream{Level: "lossless", Type: "flac", Gain: -3}, 100)
+	dl, st, ok := c.lookup("1", "exhigh")
 	if !ok || dl.size != 100 || st.Type != "flac" || st.Gain != -3 {
 		t.Fatalf("lookup: %v %+v", ok, st)
 	}
 	dl.Close()
-	if _, _, ok := c.lookup(1, "hires"); ok {
+	if _, _, ok := c.lookup("1", "hires"); ok {
 		t.Error("found a lossless song for Hi-Res")
 	}
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(filepath.Join(dir, "1-lossless.flac"), old, old)
-	store(2, &netease.Stream{Level: "exhigh", Type: "mp3"}, 100)
-	store(3, &netease.Stream{Level: "exhigh", Type: "mp3"}, 100)
-	store(4, &netease.Stream{Level: "exhigh", Type: "mp3"}, 100)
-	store(5, &netease.Stream{Level: "exhigh", Type: "mp3"}, 100)
-	if _, _, ok := c.lookup(1, "standard"); ok {
+	store("2", &netease.Stream{Level: "exhigh", Type: "mp3"}, 100)
+	store("3", &netease.Stream{Level: "exhigh", Type: "mp3"}, 100)
+	store("4", &netease.Stream{Level: "exhigh", Type: "mp3"}, 100)
+	store("5", &netease.Stream{Level: "exhigh", Type: "mp3"}, 100)
+	if _, _, ok := c.lookup("1", "standard"); ok {
 		t.Error("kept the song played longest ago")
 	}
-	if dl, _, ok := c.lookup(5, "standard"); !ok {
+	if dl, _, ok := c.lookup("5", "standard"); !ok {
 		t.Error("dropped the song just kept")
 	} else {
 		dl.Close()

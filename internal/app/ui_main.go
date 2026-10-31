@@ -170,12 +170,12 @@ func (a *app) view(c *ui.Context) {
 		// one place. It is painted here, rather than within the page, so that
 		// the sidebar and the bars are over it too.
 		still := c.Preferences().ReduceMotion
-		art, tint := a.coverArt, a.tint
+		art, tint := a.coverArt, p.tint
 		if c.Vibrancy() {
 			c.Root().Background(ui.Transparent)
 		}
 		root.Draw(func(pa *ui.Painter, r ui.Rect) {
-			a.paintBackdrop(pa, r, &a.pageBackdrop, art, tint, still, false)
+			a.paintBackdrop(pa, r, &a.pageBackdrop, art, tint, still, false, true)
 		})
 	}
 	if !c.Focused(a.searchBox) {
@@ -249,12 +249,22 @@ func (a *app) mainPanes(c *ui.Context) {
 		// page's, and the icons alone say where it is. Unfolding it brings
 		// the color back, fading in with the names, and folding it takes
 		// it out again.
+		//
+		// Following the player, the two colors are the window's own, which
+		// the palette is already blending from one song to the next: taking
+		// them rather than easing to them keeps the sidebar on the page's
+		// clock, since an animation of its own here would still be walking
+		// to the last song's shade while the page had gone to this one's.
 		if !c.Vibrancy() || p.immersive {
 			target := p.sidebar
 			if a.railFrame {
 				target = p.bg
 			}
-			col.Background(col.AnimateColor("canvas", target, ui.Animation{Duration: 220 * time.Millisecond}))
+			if p.immersive {
+				col.Background(target)
+			} else {
+				col.Background(col.AnimateColor("canvas", target, ui.Animation{Duration: 220 * time.Millisecond}))
+			}
 		}
 		col.Children(func() { a.sidebar(c) })
 	}
@@ -397,7 +407,7 @@ func (a *app) sidebar(c *ui.Context) {
 	headH := topBar(c)
 	// Where nothing in it takes the press, the sidebar moves the window, as
 	// the title bar it reaches up into would.
-	ui.Column(c).Fill().Padding(0, side, 14, side).Gap(gap).DragWindow().Children(func() {
+	ui.Column(c).Fill().Padding(0, side, 0, side).Gap(gap).DragWindow().Children(func() {
 		a.sidebarHead(c, headH)
 		ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Grow(1).Margin(0, -6).Padding(0, 6).Gap(4).Children(func() {
 			// What NetEase alone has shows while it is asked: with it off,
@@ -426,21 +436,26 @@ func (a *app) sidebar(c *ui.Context) {
 				a.myPlaylists(c, "订阅的歌单", a.subscribedLists(), false, &a.subsCollapsed)
 			}
 		})
+		a.sidebarFoot(c)
 	})
 }
 
 // sidebarHead is the room the strip along the top of the sidebar takes: the
 // window buttons sit over it where they do (the traffic lights on macOS),
-// and the pages start under it. The fold is not here: it is the strip over
-// the page's, at the window's right, where the listener's hand finds it
-// whatever the sidebar is doing.
+// and the pages start under it.
 func (a *app) sidebarHead(c *ui.Context, height float32) {
 	ui.Box(c).Height(height)
 }
 
-// foldButton is the sidebar's one toggle, at the window's top right: it
-// hides the sidebar, folds it to its rail of icons, or unfolds it again, by
-// what it is doing now.
+// foldButton is the sidebar's one toggle. It lives at the foot of the
+// sidebar, where the listener's hand already is for the account and the
+// settings, and folds the sidebar to its rail of icons or unfolds it
+// again, by what it is doing now.
+//
+// Hidden, the sidebar has no foot to hold it: the same button is then the
+// strip over the page's, at its start, which is where the sidebar was, and
+// it brings the sidebar back whole — a fold would leave the rail's icons
+// without a reason. It is one toggle either way, never two at once.
 func (a *app) foldButton(c *ui.Context) {
 	p := a.pal
 	rail := a.railFrame
@@ -465,6 +480,43 @@ func (a *app) foldButton(c *ui.Context) {
 			a.setSidebarRail(!rail)
 		}
 	}
+}
+
+// sidebarFoot is the sidebar's foot: who listens at its start, the
+// settings and the fold at its end.
+//
+// Unfolded, the three read as one row across the sidebar: the listener's
+// picture on the left, out of the way of the hand that reaches for the
+// two controls beside it, and the settings and the fold together at the
+// right, under the thumb. Folded, the rail is too narrow for a row of
+// three — a rail is 76 wide, and three 33-wide buttons and their gaps
+// need more than that — so they stack, centred, in that same order: the
+// picture, the settings, and the fold at the very bottom, where the
+// pointer can find the rail's bottom edge to unfold it again.
+func (a *app) sidebarFoot(c *ui.Context) {
+	p := a.pal
+	rail := a.railFrame
+	row := ui.Row(c.Key("foot")).Padding(0, 2, 10, 2)
+	if rail {
+		row.Gap(2).Column().AlignItems(ui.Center).Padding(0, 0, 10, 0)
+	} else {
+		row.Gap(6).AlignItems(ui.Center)
+	}
+	row.Children(func() {
+		a.accountButton(c)
+		if !rail {
+			// The two at the row's end, as the picture is at its start.
+			ui.Spacer(c)
+		}
+		s := iconButton(c.Key("settings"), iconSettings, 17, p.muted, "设置")
+		if s.Hovered() {
+			s.Background(p.hover)
+		}
+		if s.Clicked() {
+			a.openSettings()
+		}
+		a.foldButton(c)
+	})
 }
 
 // setSidebarRail folds the sidebar to a rail, or unfolds it, and keeps it
@@ -643,6 +695,13 @@ func (a *app) pageTop(c *ui.Context) {
 	}
 	bar.Padding(0, left, 0, right).Gap(10)
 	bar.Children(func() {
+		// Hidden, the sidebar has no foot to hold its toggle: the way back
+		// is here, at the strip's start, where the sidebar was. Shown, the
+		// foot holds it, and the strip holds none.
+		if _, shown := a.sidebarView(); !shown {
+			a.foldButton(c)
+			ui.Box(c).Width(1).Height(18).Background(p.hairline)
+		}
 		if len(a.history) > 0 || len(a.forward) > 0 {
 			back := iconButton(c.Key("back"), iconBack, 18, p.muted, "返回").Disabled(len(a.history) == 0)
 			if len(a.history) == 0 {
@@ -657,17 +716,12 @@ func (a *app) pageTop(c *ui.Context) {
 			ui.Box(c).Width(1).Height(18).Background(p.hairline)
 		}
 		// The search is always here, over the page, at the strip's own
-		// start: it stays where it is as the sidebar folds and unfolds,
-		// rather than moving between the two. A narrow window gives it less
-		// room rather than pushing the fold off the strip's end.
+		// start after the way back to a hidden sidebar: it stays where it
+		// is as the sidebar folds and unfolds, rather than moving between
+		// the two. A narrow window gives it less room rather than pushing
+		// anything off the strip's end.
 		a.searchField(c).Width(320).Shrink(1).MinWidth(140)
 		ui.Spacer(c)
-		// The fold is the strip's last control, at the window's top right:
-		// it does not move as the sidebar folds, hides or shows, and it is
-		// over the page rather than over the rail, where the traffic lights
-		// leave it the room to sit clear of the sidebar's edge.
-		ui.Box(c).Width(1).Height(18).Background(p.hairline)
-		a.foldButton(c)
 	})
 }
 

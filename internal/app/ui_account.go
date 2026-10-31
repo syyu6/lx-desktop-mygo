@@ -1,6 +1,7 @@
 package app
 
 import (
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -244,11 +245,76 @@ func (a *app) profileName() string {
 	return a.profile.Nickname
 }
 
-// The account is the settings': 设置 → 音源脚本 has the one sign-in the app
-// has, beside the sources it plays from. The sidebar keeps none of it, so
-// that the foot of the sidebar is the listener's own pages and no button
-// the listener did not ask for. What the account shows is a menu of the
-// app's (menu.go): 我的主页, whose page a sign-in has, and the settings.
+// The account is the sidebar's foot: who listens, by their picture alone,
+// with a dropdown to open their own page, the settings, or to sign out.
+// The settings keep a sign-in of their own (设置 → 来源), since the foot is
+// folded away with the rail's names.
+
+// accountButton is the listener's picture at the foot of the sidebar: the
+// way in when nobody is signed in, and a menu when somebody is. It says who
+// it is by the picture rather than a name, so that it is one width folded
+// and unfolded, and the row beside it has room.
+func (a *app) accountButton(c *ui.Context) {
+	p := a.pal
+	b := ui.ButtonBase(c.Key("account")).Size(33, 33).Radius(999).Center().FocusRing(false)
+	if b.Hovered() || a.accountOpen && a.profile != nil {
+		b.Background(p.hover)
+	}
+	if a.profile == nil {
+		a.accountOpen = false
+		b.Label("登录")
+		b.Tooltip("登录网易云音乐")
+		b.Children(func() {
+			ui.Box(c).Size(26, 26).Radius(13).Background(p.press).Center().Children(func() {
+				ui.Icon(c, iconUser).Size(14, 14).TextColor(p.muted)
+			})
+		})
+		if b.Clicked() {
+			a.openLogin()
+		}
+		return
+	}
+	prof := a.profile
+	b.Label(prof.Nickname).Expanded(a.accountOpen)
+	b.Tooltip(prof.Nickname)
+	b.Children(func() {
+		a.avatar(c, prof.AvatarURL, 26, p.press)
+	})
+	if b.Clicked() {
+		a.accountOpen = !a.accountOpen
+	}
+	a.accountMenu(c, b)
+}
+
+// accountMenu drops up from the listener's picture, in the colors of the
+// volume popover: their own page, the settings, and signing out.
+func (a *app) accountMenu(c *ui.Context, row ui.Element) {
+	pop := popoverColors(a.pal.dark)
+	ui.PopoverBase(c.Key("account-menu"), row, &a.accountOpen, func(panel ui.Element) {
+		panel.AttachTo(row, ui.AnchorTopStart, ui.AnchorBottomStart).Margin(0, 0, 6, 0).Padding(5).Gap(1).
+			Radius(12).Background(pop.fill).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, ui.RGBA(0, 0, 0, 0.2)).
+			Role(ui.RoleMenu).FocusGroup(ui.Vertical).Label("账户").TransformOrigin(0.5, 1).
+			Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.96, Y: 4}, Exit: &ui.Motion{Scale: 0.98}})
+		panel.Width(180)
+		shortcut := "Ctrl+,"
+		if runtime.GOOS == "darwin" {
+			shortcut = "⌘,"
+		}
+		if a.menuItem(c, iconUser, "我的主页", "").Clicked() {
+			a.accountOpen = false
+			a.open(route{page: pageUser, id: a.profile.UserID})
+		}
+		if a.menuItem(c, iconSettings, "设置…", shortcut).Clicked() {
+			a.accountOpen = false
+			a.openSettings()
+		}
+		ui.Box(c).Height(0.5).Margin(4, 8).Background(pop.edge)
+		if a.menuItem(c, iconSignOut, "退出登录", "").Clicked() {
+			a.accountOpen = false
+			a.signOut()
+		}
+	})
+}
 
 // menuItem is an item of a dropdown: an icon, its label, and the shortcut
 // that does the same, if any.

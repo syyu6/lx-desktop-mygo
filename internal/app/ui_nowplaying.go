@@ -28,7 +28,10 @@ func (a *app) npState(c *ui.Context) (open, settled bool) {
 	if open != a.npOpen {
 		a.npOpen, a.npChangedAt = open, now
 		// A build once it is at rest: to stop painting what it covers, or
-		// itself once gone.
+		// itself once gone. Asked for whether or not the app is the active
+		// one, since it does not move what shows: it builds the window
+		// once, so that the layer under Now Playing is gone when it is
+		// gone, rather than drawn for the first time as the app returns.
 		c.After(npSettle)
 		// The window buttons light over its dark backdrop, and as the
 		// theme over the pages (Windows).
@@ -417,7 +420,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) {
 		quietUnder(col, dim)
 		col.Children(func() {
 			if !loaded {
-				lyricsSkeleton(c, npShimmer(c))
+				lyricsSkeleton(c, a.npShimmer(c))
 				return
 			}
 			ui.Text(c, "纯音乐，请欣赏").FontSize(24).FontWeight(700).TextColor(white.Alpha(0.4))
@@ -428,14 +431,18 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) {
 	pos := pl.Position()
 	cur := lyrics.Index(lines, pos)
 	// Redraw as the next line begins.
-	if pl.Playing() && cur+1 < len(lines) {
+	if pl.Playing() && cur+1 < len(lines) && a.focused {
 		c.After(lines[cur+1].At - pos + 20*time.Millisecond)
 	}
 	if a.lyricTrack != tr.ID {
 		a.lyricTrack, a.lyricAt = tr.ID, -2
 		a.lyricScroll, a.lyricGlide = ui.ScrollState{}, lyricGlide{}
 	}
-	lag := a.lyricGlide.step(c, &a.lyricScroll)
+	if a.lyricAwake {
+		a.lyricAwake = false
+		a.lyricGlide.wake(c, &a.lyricScroll)
+	}
+	lag := a.lyricGlide.step(a, c, &a.lyricScroll)
 
 	scroll := ui.Scroll(c.Key("lyrics")).Grow(1).TrackScroll(&a.lyricScroll).Padding(0, 8, h*0.5, 0)
 	dim, quiet := a.quietShown(c, scroll, tr, lines, loaded)
@@ -501,7 +508,7 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 									ui.Text(c.Key(wi), wd.Text).TextColor(white.Alpha(0.38 + 0.62*lit))
 								}
 							})
-							if pl.Playing() {
+							if pl.Playing() && a.focused {
 								// Words brighten smoothly enough at 25 frames a second.
 								c.After(40 * time.Millisecond)
 							}
@@ -590,15 +597,31 @@ func (g *lyricGlide) to(c *ui.Context, s *ui.ScrollState, target float32) {
 	c.AnimationFrame()
 }
 
+// wake stops the glide where the lyrics are now, after the app left the
+// screen with it still moving: it settles there rather than sliding in when
+// the window shows again.
+func (g *lyricGlide) wake(c *ui.Context, s *ui.ScrollState) {
+	if !g.on {
+		return
+	}
+	lag, _ := g.at(c.Now())
+	g.pending = true
+	g.target = s.Y + float32(lag)
+	g.on = false
+}
+
 // step returns the lag of the lines in this frame, and asks for the next
 // while there is one. The listener scrolling stops the glide where it
 // shows.
-func (g *lyricGlide) step(c *ui.Context, s *ui.ScrollState) float32 {
+func (g *lyricGlide) step(a *app, c *ui.Context, s *ui.ScrollState) float32 {
 	if g.pending {
 		s.Y, g.set, g.pending = g.target, g.target, false
 	}
 	if !g.on {
 		return 0
+	}
+	if a.focused {
+		c.AnimationFrame()
 	}
 	lag, v := g.at(c.Now())
 	if s.Y != g.set {
@@ -610,7 +633,6 @@ func (g *lyricGlide) step(c *ui.Context, s *ui.ScrollState) float32 {
 		g.on = false
 		return 0
 	}
-	c.AnimationFrame()
 	return float32(lag)
 }
 

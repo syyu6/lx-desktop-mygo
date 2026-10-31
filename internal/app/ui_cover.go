@@ -136,7 +136,7 @@ func (a *app) npCover(c *ui.Context, tr *netease.Track, art *artwork, size float
 	})
 	if entering {
 		cs.off = ui.Point{}
-		c.AnimationFrame()
+		a.animate(c)
 	}
 	// Two fingers swiping across the trackpad move it as a drag does.
 	wrap.HandleInput(func(ev ui.InputEvent) bool {
@@ -161,7 +161,7 @@ func (a *app) npCover(c *ui.Context, tr *netease.Track, art *artwork, size float
 	if cs.swipe != 0 {
 		if c.Now().Sub(cs.swipeAt) >= swipeRest {
 			a.letSwipeGo(size, fling)
-		} else {
+		} else if a.focused {
 			c.After(swipeRest)
 		}
 	}

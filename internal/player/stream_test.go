@@ -188,7 +188,7 @@ func TestStreamIntoCache(t *testing.T) {
 	ref := decodeAll(t, b)
 
 	st := &netease.Stream{URL: srv.URL + "/whole", Size: int64(len(b)), Level: "exhigh", Type: "mp3"}
-	s, err := openStream(c.download(1, st), int64(len(ref)/2)*1000/44100)
+	s, err := openStream(c.download("1", st), int64(len(ref)/2)*1000/44100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,13 +205,13 @@ func TestStreamIntoCache(t *testing.T) {
 	if d := maxDiff(got, ref); len(got) != len(ref) || d != 0 {
 		t.Errorf("played %d of %d samples, off by up to %.4f", len(got), len(ref), d)
 	}
-	if dl, _, ok := c.lookup(1, "exhigh"); !ok {
+	if dl, _, ok := c.lookup("1", "exhigh"); !ok {
 		t.Error("not kept")
 	} else {
 		dl.Close()
 	}
 
-	cut := c.download(2, &netease.Stream{URL: srv.URL + "/cut", Size: int64(len(b)), Level: "exhigh", Type: "mp3"})
+	cut := c.download("2", &netease.Stream{URL: srv.URL + "/cut", Size: int64(len(b)), Level: "exhigh", Type: "mp3"})
 	cut.waitFor(int64(len(b) / 2))
 	cut.Close()
 	for start := time.Now(); time.Since(start) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
@@ -222,7 +222,7 @@ func TestStreamIntoCache(t *testing.T) {
 	if parts, _ := filepath.Glob(filepath.Join(dir, "*.part")); len(parts) != 0 {
 		t.Errorf("left %v", parts)
 	}
-	if _, _, ok := c.lookup(2, "exhigh"); ok {
+	if _, _, ok := c.lookup("2", "exhigh"); ok {
 		t.Error("kept a song cut short")
 	}
 }
@@ -252,7 +252,7 @@ func TestSharedStream(t *testing.T) {
 		}
 	}
 
-	dl := c.download(1, &netease.Stream{URL: srv.URL, Size: int64(len(b)), Level: "exhigh", Type: "mp3"})
+	dl := c.download("1", &netease.Stream{URL: srv.URL, Size: int64(len(b)), Level: "exhigh", Type: "mp3"})
 	playing, err := openStream(dl, ms)
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +267,7 @@ func TestSharedStream(t *testing.T) {
 	}
 	playing.Close()
 
-	kept, _, ok := c.lookup(1, "exhigh")
+	kept, _, ok := c.lookup("1", "exhigh")
 	if !ok {
 		t.Fatal("not kept")
 	}
@@ -300,7 +300,7 @@ func TestCacheKeepsOnlyKnownLevels(t *testing.T) {
 	dir := filepath.Join(root, "cache")
 	c := NewCache(dir, 1<<30)
 
-	dl := c.download(1, &netease.Stream{URL: srv.URL, Size: int64(len(b)), Level: "/../../pwned", Type: "mp3"})
+	dl := c.download("1", &netease.Stream{URL: srv.URL, Size: int64(len(b)), Level: "/../../pwned", Type: "mp3"})
 	dl.waitFor(int64(len(b)))
 	dl.Close()
 	for start := time.Now(); time.Since(start) < 2*time.Second; time.Sleep(10 * time.Millisecond) {

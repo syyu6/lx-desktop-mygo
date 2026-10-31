@@ -10,6 +10,7 @@ require (
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/llehouerou/go-faad2 v0.3.0
 	github.com/mewkiz/flac v1.0.14
+	github.com/tphakala/go-aac v0.7.1
 	golang.org/x/image v0.46.0
 	modernc.org/quickjs v0.27.0
 	rsc.io/qr v0.2.0
@@ -26,6 +27,7 @@ require (
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
+	github.com/tphakala/simd v1.11.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect

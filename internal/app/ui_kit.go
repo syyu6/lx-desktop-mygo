@@ -30,6 +30,17 @@ type palette struct {
 	// its cover's color rather than the appearance's own, and what is drawn
 	// over them is the light text of a dark window.
 	immersive bool
+	// tint is the cover color the window is painted with while immersive,
+	// and daily the day's card's colors — a deep, a rich and a glowing
+	// shade of it. They are blended with the rest of the palette from one
+	// song to the next, so that every surface that takes the window's colors
+	// changes with it, on one clock and at one speed, rather than each
+	// running an animation of its own beside it.
+	tint       ui.Color
+	dailyDeep  ui.Color
+	dailyRich  ui.Color
+	dailyGlow  ui.Color
+	dailyKnown bool
 }
 
 // paletteFor returns the app's colors for the theme t: the light or the dark
@@ -92,22 +103,43 @@ func (a *app) paletteFor(t *ui.Theme, c *ui.Context) palette {
 	if !a.themeActive {
 		// The first frame that follows the player: there is nothing on
 		// screen to fade from, and the window is the song's at once.
-		a.themeActive, a.themeTint, a.themeFrom = true, tint, immersivePalette(tint)
+		a.themeActive, a.themeTint, a.themeFrom = true, tint, immersivePalette(tint).withDaily()
 		return a.themeFrom
 	}
-	to := immersivePalette(tint)
+	to := immersivePalette(tint).withDaily()
 	now := c.Now()
 	if tint != a.themeTint {
 		// Another song: the window goes from the colors it shows now to
 		// the new one's, rather than cutting from one to the other.
-		a.themeFrom = blendPalette(a.themeFrom, immersivePalette(a.themeTint), themeProgress(now, a.themeAt))
+		a.themeFrom = blendPalette(a.themeFrom, immersivePalette(a.themeTint).withDaily(), themeProgress(now, a.themeAt))
 		a.themeTint, a.themeAt = tint, now
 	}
 	if k := themeProgress(now, a.themeAt); k < 1 {
-		c.AnimationFrame()
+		a.animate(c)
 		return blendPalette(a.themeFrom, to, k)
 	}
 	return to
+}
+
+// animate asks for the next frame of something moving on its own. The app
+// asks for none while it is not the active one: the window is behind
+// another's, or hidden under it, and a frame drawn then is one nobody sees,
+// which the window gives back only once nothing has drawn for two seconds.
+// The frame that shows it again is drawn whole, as the first of a window
+// brought forward is.
+func (a *app) animate(c *ui.Context) {
+	if a.focused {
+		c.AnimationFrame()
+	}
+}
+
+// withDaily gives p the day's card's colors for its tint, so that the card
+// takes the window's colors from the palette as everything else does,
+// rather than easing after them on a clock of its own.
+func (p palette) withDaily() palette {
+	p.dailyDeep, p.dailyRich, p.dailyGlow = dailyColors(p.tint)
+	p.dailyKnown = true
+	return p
 }
 
 // windowColor is the window's own color, around the frame the app draws:
@@ -165,6 +197,16 @@ func blendPalette(a, b palette, k float32) palette {
 	b.hairline, b.hover, b.press = mix(a.hairline, b.hairline), mix(a.hover, b.hover), mix(a.press, b.press)
 	b.accent, b.onAccent = mix(a.accent, b.accent), mix(a.onAccent, b.onAccent)
 	b.cardShade = mix(a.cardShade, b.cardShade)
+	b.tint = mix(a.tint, b.tint)
+	// The day's card takes the same blend as the window, so that it is
+	// walking to the new song's colors at the same moment the page is.
+	switch {
+	case a.dailyKnown && b.dailyKnown:
+		b.dailyDeep, b.dailyRich, b.dailyGlow =
+			mix(a.dailyDeep, b.dailyDeep), mix(a.dailyRich, b.dailyRich), mix(a.dailyGlow, b.dailyGlow)
+	case a.dailyKnown:
+		b.dailyDeep, b.dailyRich, b.dailyGlow, b.dailyKnown = a.dailyDeep, a.dailyRich, a.dailyGlow, true
+	}
 	return b
 }
 
@@ -184,6 +226,7 @@ func immersivePalette(tint ui.Color) palette {
 	deep := hsvColor(h, s, 0.24)
 	p.dark = true
 	p.bg = deep
+	p.tint = tint
 	// The sidebar is the backdrop darkened rather than a color of its own:
 	// it shows through, so that the two read as one window, and it still
 	// stands a little below the page.
@@ -508,6 +551,15 @@ func greeting(now time.Time) string {
 		return "下午好"
 	default:
 		return "晚上好"
+	}
+}
+
+// rate is animate for drawings that look the same at a rate below the
+// display's, as a record turning or a level meter: the window paints them
+// as often rather than at each refresh.
+func (a *app) rate(p *ui.Painter, fps float32) {
+	if a.focused {
+		p.AnimationFrameRate(fps)
 	}
 }
 

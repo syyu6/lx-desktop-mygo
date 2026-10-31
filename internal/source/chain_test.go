@@ -215,6 +215,12 @@ func TestChainAsksAScript(t *testing.T) {
 	if res.Served != music.SourceNetease || res.Stream.URL != "script://歌" {
 		t.Errorf("played %q from %q", res.Stream.URL, res.Served)
 	}
+	// What a script gives says nothing of how loud it is, so it plays as it
+	// came: a gain of 1 was read as one decibel to lift it by, five with
+	// the preamp, and clipped songs already at full scale.
+	if res.Stream.Gain != 0 || res.Stream.Peak != 0 {
+		t.Errorf("script stream carries gain %v and peak %v, want none", res.Stream.Gain, res.Stream.Peak)
+	}
 	// Turned off, the script is not asked, and the song does not play.
 	c.Set([]Link{{ID: netease.id, Provider: netease}})
 	if _, err := c.Resolve(music.Track{ID: 1, Name: "歌"}, "exhigh"); !errors.Is(err, ErrNotPlayable) {

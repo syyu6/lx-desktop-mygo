@@ -104,7 +104,7 @@ func (a *app) stage(c *ui.Context, tr *netease.Track, accent ui.Color) {
 		box.Children(func() {
 			quietUnder(ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center(), dim).Children(func() {
 				if !loaded {
-					stageSkeleton(c, npShimmer(c), f, w)
+					stageSkeleton(c, a.npShimmer(c), f, w)
 					return
 				}
 				ui.Text(c, "纯音乐，请欣赏").FontSize(28).FontWeight(800).TextColor(white.Alpha(0.4))
@@ -117,7 +117,7 @@ func (a *app) stage(c *ui.Context, tr *netease.Track, accent ui.Color) {
 	cur := lyrics.Index(lines, pos)
 	// Under a hot comment there is nothing to move: the quiet asks for
 	// the frame where it ends.
-	if pl.Playing() && !(quiet && dim > 0.98) {
+	if pl.Playing() && !(quiet && dim > 0.98) && a.focused {
 		// 倾诉 shows a part of a line a little before it is sung.
 		lead := 80 * time.Millisecond
 		if a.settings.StageStyle == "tilt" {

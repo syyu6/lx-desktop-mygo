@@ -103,8 +103,10 @@ var fogShader = sync.OnceValue(func() *shader.Shader { return shader.MustCompile
 // backdropFrame is how often the fog is painted while it moves.
 const backdropFrame = time.Second / 30
 
-// backdropFade is how long another song's backdrop takes to fade in.
-const backdropFade = 700 * time.Millisecond
+// backdropFade is how long another song's backdrop takes to fade in. It is
+// the window's own fade, so that the backdrop behind the pages reaches the
+// new song's colors at the same moment the page over it does.
+const backdropFade = themeFade
 
 // backdropCache is the backdrop as last painted, and where the fog's
 // drift and its pulse are.
@@ -127,11 +129,12 @@ type backdropCache struct {
 	last    time.Time
 }
 
-// backdrop paints the backdrop behind Now Playing, still or fog.
+// backdrop paints the backdrop behind Now Playing, still or fog. Its tint
+// is the song's own, and it eases from the last song's itself.
 func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color) {
 	still := c.Preferences().ReduceMotion
 	ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
-		a.paintBackdrop(p, r, &a.backdropCache, art, tint, still, true)
+		a.paintBackdrop(p, r, &a.backdropCache, art, tint, still, true, false)
 	})
 }
 
@@ -139,7 +142,11 @@ func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color) {
 // tinted by tint, still or as fog. fogAllowed is off for the backdrop
 // behind the pages, which is there to be read over, and which costs what a
 // still picture costs rather than a shader thirty times a second.
-func (a *app) paintBackdrop(p *ui.Painter, r ui.Rect, bd *backdropCache, art *artwork, tint ui.Color, still, fogAllowed bool) {
+//
+// eased says the caller has already blended tint from one song to the next,
+// as the window's palette does: it is painted as it comes, since easing it
+// again here would have the backdrop arrive after the page it is behind.
+func (a *app) paintBackdrop(p *ui.Painter, r ui.Rect, bd *backdropCache, art *artwork, tint ui.Color, still, fogAllowed, eased bool) {
 	pl := a.pl
 	fog := fogAllowed && a.settings.Fog
 	// The CPU, drawing the fog for want of a GPU, paints far fewer
@@ -156,7 +163,7 @@ func (a *app) paintBackdrop(p *ui.Painter, r ui.Rect, bd *backdropCache, art *ar
 		}
 	}
 	now := p.Now()
-	if bd.canvas != nil && (bd.art != art || bd.tint != tint) {
+	if bd.canvas != nil && !eased && (bd.art != art || bd.tint != tint) {
 		// Another song: the last one's stays as it was, fading out, and
 		// the new one is painted coming from its colors, so that the two
 		// show at once only as long as it takes to ease from one to the
@@ -211,15 +218,17 @@ func (a *app) paintBackdrop(p *ui.Painter, r ui.Rect, bd *backdropCache, art *ar
 			// Eased out, as it fades.
 			k = 1 - (1-k)*(1-k)*(1-k)
 			p.ImageRegion(bd.before.Bitmap(), ui.Rect{}, r, ui.ImageOptions{Tint: white.Alpha(1 - k)})
-			p.AnimationFrame()
+			if a.focused {
+				p.AnimationFrame()
+			}
 		} else {
 			bd.before = nil
 		}
 	}
-	if changing {
+	if changing && a.focused {
 		p.AnimationFrame()
 	}
-	if moved {
+	if moved && a.focused {
 		p.After(backdropFrame)
 	}
 }

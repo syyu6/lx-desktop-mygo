@@ -164,7 +164,7 @@ func (a *app) wallSong(c *ui.Context, tr *netease.Track, art *artwork, top, h fl
 			pos := pl.Position()
 			cur := lyrics.Index(lines, pos)
 			// Redraw as the next line begins.
-			if pl.Playing() && cur+1 < len(lines) {
+			if pl.Playing() && cur+1 < len(lines) && a.focused {
 				c.After(lines[cur+1].At - pos + 20*time.Millisecond)
 			}
 			sung := ""
@@ -226,7 +226,7 @@ func (a *app) wall(c *ui.Context, y, w, h, top, foot, frost float32) {
 		ws.shown = plane.DragOffset()
 		at := addPoint(ws.shown, ws.pan)
 		// The rows sway while the song plays, and settle while it is paused.
-		swaying := pl.Playing() && !c.Preferences().ReduceMotion
+		swaying := pl.Playing() && !c.Preferences().ReduceMotion && a.focused
 		now := c.Now()
 		if swaying {
 			_, turn := rowSwayTarget(0, now)

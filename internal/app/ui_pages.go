@@ -465,7 +465,7 @@ func (a *app) nowPlayingBars(c *ui.Context) {
 		a.rowBars.step(p.Now(), lv, live)
 		drawBars(p, r, &a.rowBars, 4, color, 2.5)
 		if live || a.rowBars.group(0, player.Bands) > 0.01 {
-			p.AnimationFrame()
+			a.animate(c)
 		}
 	})
 }

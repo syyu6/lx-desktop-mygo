@@ -27,6 +27,9 @@ func TestAccentFollowsThePlayer(t *testing.T) {
 	a.pl.PlayQueue([]netease.Track{{ID: 1, Name: "歌", Album: netease.Album{PicURL: url}}}, 0)
 
 	a.settings = defaultSettings()
+	// The system's own colors first, which the appearance follows before it
+	// follows the player.
+	a.settings.Appearance = "system"
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 	red := a.pal.accent
@@ -158,6 +161,99 @@ func TestTheWindowEasesBetweenSongs(t *testing.T) {
 	if a.pal.bg.B <= a.pal.bg.G {
 		t.Errorf("after the change, the page #%02x%02x%02x is not the new song's blue", a.pal.bg.R, a.pal.bg.G, a.pal.bg.B)
 	}
+}
+
+// The day's card takes the colors the window's palette is blending, and
+// draws nothing of its own: it used to run a 600ms animation beside the
+// window's 650ms fade, so mid-change it was somewhere else entirely from
+// the page beside it.
+func TestTheDailyCardTakesTheWindowColors(t *testing.T) {
+	a := chainTestApp(t)
+	a.art = newArtCache(func(func()) {})
+	url := func(id string) string { return "https://p1.music.126.net/" + id }
+	put := func(id string, c color.RGBA) {
+		img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+		for y := range 64 {
+			for x := range 64 {
+				img.Set(x, y, c)
+			}
+		}
+		a.art.art[netease.Sized(url(id), 600)+"#backdrop"] = &artwork{bmp: ui.NewBitmap(img), tint: dominantColor(img)}
+	}
+	put("green", color.RGBA{47, 168, 79, 255})
+	put("blue", color.RGBA{28, 76, 190, 255})
+
+	a.settings = defaultSettings()
+	a.settings.Appearance = "cover"
+	a.daily = []netease.Track{{ID: 9, Name: "一", Album: netease.Album{PicURL: url("green")}}}
+	a.pl.PlayQueue([]netease.Track{{ID: 1, Name: "绿", Album: netease.Album{PicURL: url("green")}}}, 0)
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	greenDeep, greenRich, greenGlow := a.pal.dailyDeep, a.pal.dailyRich, a.pal.dailyGlow
+
+	a.pl.PlayQueue([]netease.Track{{ID: 2, Name: "蓝", Album: netease.Album{PicURL: url("blue")}}}, 0)
+	// The frame the change is noticed on still shows the last song's.
+	tt.Frame()
+	tt.Advance(themeFade / 3)
+	tt.Frame()
+	if !a.pal.dailyKnown || !a.pal.immersive {
+		t.Fatal("the window's palette carries no card colors")
+	}
+	if a.pal.dailyDeep == greenDeep {
+		t.Error("the card waited for the page: it is still the last song's")
+	}
+	// The card is exactly as far along as the page: the same fraction of
+	// the way from the song before's colors to this one's, over the
+	// palette's own two ends.
+	from, to := a.themeFrom, immersivePalette(a.tint).withDaily()
+	k := blendFraction(from.dailyDeep, to.dailyDeep, a.pal.dailyDeep)
+	if kb := blendFraction(from.bg, to.bg, a.pal.bg); abs32(k-kb) > 0.06 {
+		t.Errorf("the card is %.2f of the way, the page %.2f", k, kb)
+	}
+	// And the card draws from the palette rather than a color of its own:
+	// however it is asked, mid-change, it answers with the window's.
+	deep, rich, glow := a.dailyColors(nil)
+	if deep != a.pal.dailyDeep || rich != a.pal.dailyRich || glow != a.pal.dailyGlow {
+		t.Errorf("the card draws %v, the window's %v", deep, a.pal.dailyDeep)
+	}
+	// Arrived, both are the new song's, and neither kept the old one's.
+	tt.Advance(themeFade)
+	tt.Frame()
+	want := immersivePalette(a.tint).withDaily()
+	if a.pal.dailyDeep != want.dailyDeep || a.pal.dailyRich != want.dailyRich || a.pal.dailyGlow != want.dailyGlow {
+		t.Errorf("the card is %v, the window's own %v", a.pal.dailyDeep, want.dailyDeep)
+	}
+	if a.pal.dailyDeep == greenDeep || a.pal.dailyRich == greenRich || a.pal.dailyGlow == greenGlow {
+		t.Error("the card kept a color of the song before")
+	}
+}
+
+// imageOf is a square of one color, for the colors the window blends from.
+func imageOf(c color.RGBA) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	for y := range 8 {
+		for x := range 8 {
+			img.Set(x, y, c)
+		}
+	}
+	return img
+}
+
+// blendFraction returns how far shown is from a to b, by the channel that
+// moved most.
+func blendFraction(a, b, shown ui.Color) float32 {
+	d := func(x, y uint8) float32 { return float32(x) - float32(y) }
+	ch := [][3]uint8{{a.R, b.R, shown.R}, {a.G, b.G, shown.G}, {a.B, b.B, shown.B}}
+	best, k := float32(0), float32(0)
+	for _, c := range ch {
+		total := d(c[1], c[0])
+		if total == 0 || abs32(total) < best {
+			continue
+		}
+		best = abs32(total)
+		k = d(c[2], c[0]) / total
+	}
+	return k
 }
 
 // On the day of the recommendations, the card takes the playing song's
