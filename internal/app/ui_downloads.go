@@ -363,7 +363,7 @@ func (a *app) dlEmpty(c *ui.Context, tab int) {
 		switch {
 		case a.dl == nil || len(a.dl.Tasks()) == 0:
 			ui.Text(c, "还没有下载").FontSize(15).FontWeight(600)
-			ui.Text(c, "在歌曲、专辑或歌单的「…」里下载，也可以选中多首一起下载").FontSize(12.5).TextColor(p.muted)
+			ui.Text(c, "在歌曲的「…」里下载，专辑、歌单、歌手与每日推荐的头上有「下载」，也可以选中多首一起下载").FontSize(12.5).TextColor(p.muted)
 		case tab == 1:
 			ui.Text(c, "没有正在下载的歌曲").FontSize(14).TextColor(p.muted)
 		case tab == 2:
@@ -461,7 +461,10 @@ func (a *app) dlRow(c *ui.Context, t *download.Task, tasks []download.Task, i in
 		// row as it opens — an element built only under the pointer has
 		// gone by then, and its choice is dropped, which left 「删除任务和
 		// 文件」 doing nothing at all.
-		actions := ui.Row(c).Width(80).Gap(2).Justify(ui.End)
+		// A finished row shows three of them, and a squeezed row squeezes
+		// its buttons until the one furthest along is too small to aim at:
+		// the slot is the three buttons' own width, at the row's gap.
+		actions := ui.Row(c).Width(100).Gap(2).Justify(ui.End)
 		if !hovered && !chosen {
 			actions.Invisible()
 		}
@@ -530,6 +533,11 @@ func (a *app) dlLine(t *download.Task) string {
 	case download.Waiting:
 		return "等待下载"
 	case download.Paused:
+		// A task paused because its file went says so: 「继续」 saves it
+		// again, and the line says why it is there to press.
+		if t.Note != "" {
+			return t.Note
+		}
 		return "已暂停 · " + t.Track.ArtistNames()
 	case download.Done:
 		if t.Note != "" {

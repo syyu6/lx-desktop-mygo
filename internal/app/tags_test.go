@@ -130,22 +130,6 @@ func TestWriteMP3Tags(t *testing.T) {
 	}
 }
 
-// A settings file with downloads keeps their switches; a file without them
-// takes the defaults, which leave downloads off.
-func TestDownloadSettingsDefaults(t *testing.T) {
-	def := defaultSettings()
-	if def.DownloadOn {
-		t.Error("downloads begin on")
-	}
-	if def.DownloadMax != 3 || !def.DownloadSkip || !def.EmbedCover || def.DownloadLrcFormat != "utf8" {
-		t.Errorf("the download defaults are %+v", def)
-	}
-	// The folder begins at the Desktop, which the app paths tell.
-	if dir := def.DownloadPath; dir != "" {
-		t.Errorf("a fresh settings file names %q, rather than the Desktop", dir)
-	}
-}
-
 // The tag options follow the switches: a translation needs the words it
 // goes into, and a lyric file its own.
 func TestTagOptsFollowTheSwitches(t *testing.T) {

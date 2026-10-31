@@ -58,30 +58,31 @@ func (a *app) downloadRun(ctx context.Context, task *download.Task, p *download.
 	// nothing but a copy.
 	var cached string
 	var st *music.Stream
-	var served string
+	// kept is the level the bytes are actually at, which may be below the
+	// one asked for, and is what the row and the player read.
+	var kept string
 	if a.pl.Cache != nil {
-		if path, kept, ok := a.pl.Cache.Cached(task.Track, task.Level); ok {
-			cached, st, served = path, &kept, kept.Level
-			p.Total(kept.Size)
+		if path, hit, ok := a.pl.Cache.Cached(task.Track, task.Level); ok {
+			cached, st, kept = path, &hit, hit.Level
+			p.Total(hit.Size)
 			p.Update(func(t *download.Task) {
-				t.Served, t.FromCache, t.Size = kept.Level, true, kept.Size
+				t.Served, t.FromCache, t.Size = hit.Level, true, hit.Size
 			})
 		}
 	}
-	var link string
 	if cached == "" {
 		var err error
-		if st, served, link, err = a.downloadStream(ctx, task.Track, task.Level); err != nil {
+		if st, kept, err = a.downloadStream(ctx, task.Track, task.Level); err != nil {
 			return err
 		}
-		if st.Level != "" {
-			p.Update(func(t *download.Task) { t.Served = st.Level })
+		if kept == "" {
+			kept = task.Level
 		}
+		p.Update(func(t *download.Task) { t.Served = kept })
 		if st.Size > 0 {
 			p.Total(st.Size)
 		}
 	}
-	_ = link
 
 	part, err := os.CreateTemp(dir, ".lxmuc-*.part")
 	if err != nil {
@@ -97,7 +98,11 @@ func (a *app) downloadRun(ctx context.Context, task *download.Task, p *download.
 			// The cache dropped it between the look and the copy: the song
 			// is fetched, as it would have been without one.
 			var ferr error
-			if st, served, _, ferr = a.downloadStream(ctx, task.Track, task.Level); ferr == nil {
+			if st, kept, ferr = a.downloadStream(ctx, task.Track, task.Level); ferr == nil {
+				if kept == "" {
+					kept = task.Level
+				}
+				p.Update(func(t *download.Task) { t.Served = kept })
 				err = fetchStream(ctx, st.URL, part, p)
 			} else {
 				err = ferr
@@ -152,8 +157,8 @@ func (a *app) downloadRun(ctx context.Context, task *download.Task, p *download.
 	}
 	p.Update(func(t *download.Task) {
 		t.Path, t.Name, t.Ext = path, name, format
-		if served != "" {
-			t.Served = served
+		if kept != "" {
+			t.Served = kept
 		}
 	})
 	return nil
@@ -189,12 +194,16 @@ func saidType(st *music.Stream) string {
 // same walk the player makes, since a script whose upstream is down answers
 // with a 404. A song no source will stream is said so in the words it will
 // be read as.
-func (a *app) downloadStream(ctx context.Context, t music.Track, level string) (*music.Stream, string, string, error) {
+//
+// What comes back besides the stream is the level it will be stored at: the
+// one the source served, which may be below the one asked for, and the one
+// asked for when the source did not say.
+func (a *app) downloadStream(ctx context.Context, t music.Track, level string) (*music.Stream, string, error) {
 	var skip string
 	var firstErr error
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, "", "", err
+			return nil, "", err
 		}
 		var res source.Resolution
 		var err error
@@ -204,7 +213,7 @@ func (a *app) downloadStream(ctx context.Context, t music.Track, level string) (
 		case a.chain != nil:
 			// Not to look elsewhere: its own source, and no other, as far
 			// as it will stream the song.
-			res, err = a.chain.Own(t, level)
+			res, err = a.chain.OwnExcept(t, level, skip)
 		case a.pl.Resolve != nil:
 			var st *music.Stream
 			var served string
@@ -217,18 +226,29 @@ func (a *app) downloadStream(ctx context.Context, t music.Track, level string) (
 		}
 		if err != nil {
 			if firstErr != nil {
-				return nil, "", "", fmt.Errorf("来源给出的地址无法下载（%v），其它的来源也没有这首歌", firstErr)
+				return nil, "", fmt.Errorf("来源给出的地址无法下载（%v），其它的来源也没有这首歌", firstErr)
 			}
-			return nil, "", "", downloadReason(t, err)
+			return nil, "", downloadReason(t, err, a.settings.DownloadOtherSource)
 		}
 		// Its first bytes say whether the address is a song at all: a
 		// source that has taken the song down answers with a page, and the
 		// next one must get its turn.
 		if err := checkAudio(ctx, res.Stream.URL); err != nil {
-			firstErr, skip = err, res.Link
+			firstErr = err
+			// Moving on needs a link to leave out. One that names none is
+			// the only one there is: asking again would ask the same
+			// source the same question, and check its address for ever.
+			if res.Link == "" || res.Link == skip {
+				return nil, "", err
+			}
+			skip = res.Link
 			continue
 		}
-		return res.Stream, res.Served, res.Link, nil
+		kept := res.Stream.Level
+		if kept == "" {
+			kept = level
+		}
+		return res.Stream, kept, nil
 	}
 }
 
@@ -268,8 +288,16 @@ func checkAudio(ctx context.Context, url string) error {
 }
 
 // downloadReason says, in words the listener reads, why a song did not
-// download.
-func downloadReason(t music.Track, err error) error {
+// download. elsewhere says whether the other sources were asked: when they
+// were not, saying they have none of the song would send the listener after
+// a recording nobody looked for, where turning 其它来源 on may well find it.
+func downloadReason(t music.Track, err error, elsewhere bool) error {
+	if !elsewhere {
+		if t.VIP() {
+			return errors.New("这首歌需要 VIP，自己的来源给不出，可以打开「其它来源」再试")
+		}
+		return errors.New("这首歌自己的来源给不出，可以打开「其它来源」再试")
+	}
 	switch {
 	case errors.Is(err, netease.ErrUnavailable), errors.Is(err, source.ErrNotPlayable):
 		if t.VIP() {

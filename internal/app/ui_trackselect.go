@@ -94,10 +94,12 @@ func (a *app) trkDownloadButton(c *ui.Context, tracks []netease.Track) {
 	bg := p.hover.Over(p.bg)
 	// One shape of two halves: the pill's own background is the row's, so
 	// the halves share it, and the hairline is what tells the click that
-	// downloads from the one that opens the menu.
-	ui.Row(c).Height(36).Radius(999).Background(bg).Gap(0).AlignItems(ui.Center).Children(func() {
+	// downloads from the one that opens the menu. Its own size, not the
+	// row's to shrink: squeezed, the halves overlap the controls beside
+	// them, and the chevron lands under the neighbouring 「更多」.
+	ui.Row(c).Height(36).Radius(999).Background(bg).Gap(0).AlignItems(ui.Center).Shrink(0).Children(func() {
 		half := func(key any, label string) ui.Element {
-			b := ui.ButtonBase(c.Key(key)).Height(36).Padding(0, 16).Radius(999).FocusRing(false).
+			b := ui.ButtonBase(c.Key(key)).Height(36).Padding(0, 16).Radius(999).FocusRing(false).Shrink(0).
 				Label(label).AlignItems(ui.Center).Gap(8).TextColor(p.text)
 			if b.Hovered() {
 				b.Background(bg.Mix(ui.RGB(255, 255, 255), 0.12))

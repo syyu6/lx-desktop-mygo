@@ -206,6 +206,37 @@ func TestManagerPauseResume(t *testing.T) {
 	}
 }
 
+// Pausing, removing and deleting actually stop the run they end: a task
+// left running would keep writing its file, and resuming it would start a
+// second run of the same song.
+func TestManagerStopsTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(m *Manager)
+	}{
+		{"pause", func(m *Manager) { m.Pause("a") }},
+		{"remove", func(m *Manager) { m.Remove("a") }},
+		{"delete", func(m *Manager) { m.Delete([]string{"a"}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cancelled := make(chan struct{}, 1)
+			m := newTestManager(func(ctx context.Context, tk *Task, p *Progress) error {
+				<-ctx.Done()
+				cancelled <- struct{}{}
+				return ctx.Err()
+			})
+			m.Add([]Task{waiting("a")})
+			waitUntil(func() bool { tk, _ := m.Task("a"); return tk.Status == Running })
+			tc.stop(m)
+			select {
+			case <-cancelled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the run went on after the task was stopped")
+			}
+		})
+	}
+}
+
 // A run that fails says why, in the words it returned, and retry asks for
 // it again.
 func TestManagerFailure(t *testing.T) {
@@ -257,28 +288,39 @@ func TestManagerRestore(t *testing.T) {
 	}
 }
 
-// A task whose file is gone is waiting again: the listener took it out of
-// the folder, and the page offers to save it anew.
+// A task whose file is gone is paused, with its song: the listener took it
+// out of the folder, and the page offers to save it anew when they say so.
+// Nothing starts on its own, which at launch is what the CHANGELOG promises
+// and what keeps a run from failing about the settings for a song that was
+// saved fine.
 func TestManagerRequeue(t *testing.T) {
 	block := make(chan struct{})
 	defer close(block)
+	started := 0
 	m := newTestManager(func(ctx context.Context, t *Task, p *Progress) error {
+		started++
 		<-block
 		return nil
 	})
 	m.Restore([]Task{
-		{ID: "a", Status: Done, Path: "/gone.flac", Done: 10, Size: 10},
+		{ID: "a", Status: Done, Path: "/gone.flac", Done: 10, Size: 10, Served: "lossless"},
 		{ID: "b", Status: Done, Path: "/here.flac"},
 	})
 	m.Requeue(func(t *Task) bool { return t.Path == "/gone.flac" })
 	tasks := m.Tasks()
-	// It was started as it was requeued, which is what the page offers;
-	// what the requeue cleared is what matters here.
-	if tasks[0].Path != "" || (tasks[0].Status != Waiting && tasks[0].Status != Running) {
+	if tasks[0].Path != "" || tasks[0].Status != Paused || tasks[0].Note == "" {
 		t.Errorf("the stale task is %+v", tasks[0])
+	}
+	// Its song and its level stay: 继续 asks for the same thing again.
+	if tasks[0].Level != "" || tasks[0].Served != "lossless" {
+		t.Errorf("the stale task lost its level: %+v", tasks[0])
 	}
 	if tasks[1].Status != Done || tasks[1].Path != "/here.flac" {
 		t.Errorf("the kept task is %+v", tasks[1])
+	}
+	time.Sleep(20 * time.Millisecond)
+	if started != 0 {
+		t.Errorf("%d tasks started on their own when requeued", started)
 	}
 }
 

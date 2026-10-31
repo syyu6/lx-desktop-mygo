@@ -230,7 +230,9 @@ func (m *Manager) Resume(id string) {
 	m.mu.Lock()
 	for _, t := range m.tasks {
 		if (id == "" || t.ID == id) && (t.Status == Paused || t.Status == Failed) {
-			t.Status, t.Reason = Waiting, ""
+			// The note said why it waited — a file that went, say — which
+			// is done with now that it is asked for again.
+			t.Status, t.Reason, t.Note = Waiting, "", ""
 		}
 	}
 	m.markDirtyLocked()
@@ -385,15 +387,20 @@ func (m *Manager) Restore(tasks []Task) {
 	m.notify()
 }
 
-// Requeue marks the tasks stale finds questionable as waiting again, so that
-// they save their song once more: for a task done with no file where it said
-// it put it, which the listener took out of the folder, or moved.
+// Requeue marks the tasks stale finds questionable as paused, keeping their
+// song and level: for a task done with no file where it said it put it,
+// which the listener took out of the folder, or moved. Paused rather than
+// waiting, since nothing asked for it: the page offers the song again, and
+// the listener says when — starting it here would fetch a song nobody
+// asked for, and would fail outright with downloads switched off.
 func (m *Manager) Requeue(stale func(*Task) bool) {
 	m.mu.Lock()
 	changed := false
 	for _, t := range m.tasks {
 		if stale(t) {
-			t.Status, t.Path, t.Done, t.Size, t.Note = Waiting, "", 0, 0, ""
+			t.Status, t.Path, t.Done, t.Size = Paused, "", 0, 0
+			t.Reason, t.Speed = "", 0
+			t.Note = "文件已经不在了，继续下载可以重新保存"
 			changed = true
 		}
 	}
@@ -402,7 +409,6 @@ func (m *Manager) Requeue(stale func(*Task) bool) {
 	if changed {
 		m.notify()
 		m.save()
-		m.kick()
 	}
 }
 

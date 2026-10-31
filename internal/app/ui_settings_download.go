@@ -264,6 +264,9 @@ func (a *app) downloadToggled() {
 	if a.dl != nil {
 		a.dl.Pause("")
 	}
+	// A list left in choice mode would keep choosing with a click, and the
+	// bar that says so is gone with downloads: the choice goes with it.
+	a.trkClear()
 	if a.route.page == pageDownloads {
 		a.open(route{page: pageHome})
 	}

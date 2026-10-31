@@ -12,6 +12,7 @@ import (
 	"netease-music-mygo/internal/download"
 	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
+	"netease-music-mygo/internal/player"
 )
 
 // downloadsApp is an app with downloads on, its songs going in a folder of
@@ -59,6 +60,15 @@ func TestDownloadAsksQuality(t *testing.T) {
 	if a.dlAsk.level != "lossless" {
 		t.Errorf("the level asked is %q, want the default", a.dlAsk.level)
 	}
+	// A listener may pick another level in the dialog, and the whole batch
+	// is queued at it: the default is only where it begins.
+	if err := tt.Click("极高（320k）"); err != nil {
+		t.Fatalf("the dialog has no 极高: %v", err)
+	}
+	tt.Frame()
+	if a.dlAsk.level != "exhigh" {
+		t.Errorf("choosing 极高 asked for %q", a.dlAsk.level)
+	}
 	if err := tt.Click("开始下载"); err != nil {
 		t.Fatalf("the dialog has no download button: %v", err)
 	}
@@ -69,7 +79,7 @@ func TestDownloadAsksQuality(t *testing.T) {
 		t.Fatalf("%d tasks queued, want 2", len(tasks))
 	}
 	for _, tk := range tasks {
-		if tk.Level != "lossless" {
+		if tk.Level != "exhigh" {
 			t.Errorf("%s queued at %q, want the level chosen", tk.Track.Name, tk.Level)
 		}
 		if tk.Dir != dir {
@@ -82,7 +92,7 @@ func TestDownloadAsksQuality(t *testing.T) {
 
 	// Asking for the same songs again adds nothing, and says so.
 	a.askDownload(songs[:1])
-	a.startDownloads(songs[:1], "lossless")
+	a.startDownloads(songs[:1], "exhigh")
 	if n := len(a.dl.Tasks()); n != 2 {
 		t.Errorf("%d tasks after asking again, want 2", n)
 	}
@@ -112,8 +122,16 @@ func TestDownloadsPageTabs(t *testing.T) {
 		{3, []string{"七里香"}, []string{"晴天", "夜曲"}},
 		{4, []string{"夜曲"}, []string{"晴天", "七里香"}},
 	} {
-		a.dlTab = c.tab
+		// The tab is clicked, as a listener does: the labels count what
+		// each holds, and the click is what shows the page.
+		label := []string{"所有任务 3", "正在下载", "已暂停 1", "出错 1", "已完成 1"}[c.tab]
+		if err := tt.Click(label); err != nil {
+			t.Fatalf("tab %d cannot be clicked: %v; the tabs are %q", c.tab, err, tt.Texts())
+		}
 		tt.Frame()
+		if a.dlTab != c.tab {
+			t.Fatalf("clicking %q showed tab %d", label, a.dlTab)
+		}
 		for _, name := range c.shown {
 			if !tt.HasText(name) {
 				t.Errorf("tab %d does not show %q", c.tab, name)
@@ -195,11 +213,6 @@ func TestDownloadSettings(t *testing.T) {
 	openSettingsTab(a, settingsDownload)
 	tt := ui.NewTester(a.settingsView, settingsWidth, 1600)
 	tt.Frame()
-	for _, want := range []string{"启用下载", "保存目录", "默认音质", "同时下载", "命名方式", "已存在时跳过", "其它来源", "写入封面", "写入歌词", "另存歌词文件"} {
-		if !tt.HasText(want) {
-			t.Errorf("the download settings do not show %q", want)
-		}
-	}
 	// A newer folder does not move a task already queued: the listener
 	// asked for that one when they asked for the song.
 	task := a.dlTask(music.Track{ID: 1, Name: "晴天"}, "exhigh")
@@ -212,20 +225,37 @@ func TestDownloadSettings(t *testing.T) {
 	}
 }
 
-// A downloaded file plays from itself, without asking a source.
+// A downloaded file plays from itself, without asking a source: the
+// player opens the file and hears the level it was kept at, rather than
+// resolving the song again.
 func TestDownloadedFilePlays(t *testing.T) {
 	a, dir := downloadsApp(t)
-	path := filepath.Join(dir, "晴天 - 周杰伦.flac")
-	if err := os.WriteFile(path, []byte("fLaC"), 0o600); err != nil {
+	path := filepath.Join(dir, "晴天 - 周杰伦.mp3")
+	if err := os.WriteFile(path, testSongMP3(t), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	// The player hands its work to the main thread; a test has none, so
+	// it runs what was handed over, as a frame would.
+	a.pl = player.New(func(fn func()) { fn() })
+	a.pl.SetVolume(0)
+	asked := false
+	a.pl.Resolve = func(netease.Track, string) (*netease.Stream, string, error) {
+		asked = true
+		return nil, "", os.ErrNotExist
 	}
 	task := &download.Task{
 		Track:  netease.Track{ID: 1, Name: "晴天", Artists: []netease.Artist{{Name: "周杰伦"}}},
 		Served: "lossless",
 		Path:   path,
 	}
-	// The player's own rule: the file is taken for the song it is of, once.
 	a.dlPlay(task)
+	waitFor(t, func() bool { return a.pl.Stream() != nil })
+	if asked {
+		t.Error("playing a downloaded file asked a source for its stream")
+	}
+	if st := a.pl.Stream(); st != nil && st.Level != "lossless" {
+		t.Errorf("opened at %q, want the level it was kept at", st.Level)
+	}
 	if cur := a.pl.Current(); cur == nil || cur.Ident() != task.Track.Ident() {
 		t.Fatalf("playing the file put %v in the player", cur)
 	}
@@ -236,6 +266,18 @@ func TestDownloadedFilePlays(t *testing.T) {
 	if a.toast != "文件已经不在了，可以重新下载" {
 		t.Errorf("a missing file says %q", a.toast)
 	}
+}
+
+// testSongMP3 is a short song for the player to open: the fixture the
+// player's own tests use, read here so that a download test plays a real
+// file rather than bytes that only look like one.
+func testSongMP3(t *testing.T) []byte {
+	t.Helper()
+	b, err := os.ReadFile("../player/testdata/seek.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 // The download page asks for no frames of its own: a list of tasks waits

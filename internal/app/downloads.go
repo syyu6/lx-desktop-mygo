@@ -75,7 +75,10 @@ func (a *app) newDownloads() {
 	a.dl.SetMax(a.settings.DownloadMax)
 	a.dl.Restore(loadDownloads())
 	// A task whose file the listener took out of the folder is not done any
-	// more: it is waiting, and saves the song again as it is asked to.
+	// more: it is paused, with the song it was asked for, and the page's
+	// 「继续」 asks for it again. Not started here: at launch nothing has
+	// been asked, and with downloads switched off the run would fail with
+	// an error about the settings for a song that was saved fine.
 	a.dl.Requeue(func(t *download.Task) bool {
 		if t.Status != download.Done || t.Path == "" {
 			return false

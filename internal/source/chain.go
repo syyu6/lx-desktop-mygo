@@ -179,7 +179,13 @@ func (c *Chain) ResolveExcept(t music.Track, level, skip string) (Resolution, er
 // let it look for the song on the other sources. A song of a source that
 // has none of the others' recordings plays the same either way.
 func (c *Chain) Own(t music.Track, level string) (Resolution, error) {
-	return c.resolveIn(t, level, "", false)
+	return c.OwnExcept(t, level, "")
+}
+
+// OwnExcept is Own, leaving out a link: the one whose stream did not open,
+// so that the next link of the same source gets its turn.
+func (c *Chain) OwnExcept(t music.Track, level, skip string) (Resolution, error) {
+	return c.resolveIn(t, level, skip, false)
 }
 
 // resolveIn walks the chain for t, looking for it on the other sources when

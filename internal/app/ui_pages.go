@@ -401,7 +401,7 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 			// hand on a mouse may not look for.
 			ui.Box(c).Width(26).Center().Children(func() {
 				switch {
-				case a.trkPick:
+				case a.trkPick && a.downloadEnabled():
 					a.trkBox(c, chosen)
 				case playing:
 					a.nowPlayingBars(c)
@@ -479,9 +479,11 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 				a.trkPickOn()
 				a.trkToggle(tr)
 				a.trkLast = i
-			case a.trkPick:
+			case a.trkPick && a.downloadEnabled():
 				// In choice mode a click chooses, rather than playing: the
-				// mode is what the listener asked the list for.
+				// mode is what the listener asked the list for. Downloads
+				// switched off since means the mode is over, and a click
+				// plays again — the boxes go with the bar that gave them.
 				a.trkToggle(tr)
 				a.trkLast = i
 			case tr.Playable():

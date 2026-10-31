@@ -165,3 +165,68 @@ func TestChoosingEverySong(t *testing.T) {
 		t.Errorf("%d songs chosen, want all %d", got, len(tracks))
 	}
 }
+
+// Turning downloads off with a list in choice mode ends the mode with them:
+// otherwise a click on a song keeps choosing instead of playing, and the bar
+// that would say so is gone.
+func TestTurningDownloadsOffEndsChoiceMode(t *testing.T) {
+	a, _ := downloadsApp(t)
+	tracks := []netease.Track{song(1, "一张相片", "林宥嘉"), song(2, "宝船", "DOUDOU")}
+	a.playlists[playlistKey("", 10)] = &netease.Playlist{ID: 10, Name: "通勤", Tracks: tracks}
+	a.route = route{page: pagePlaylist, id: 10}
+	tt := ui.NewTester(a.view, 1180, 780)
+	tt.Frame()
+	a.trkPickOn()
+	a.trkSel = map[string]bool{tracks[0].Ident(): true}
+	tt.Frame()
+
+	a.settings.DownloadOn = false
+	a.downloadToggled()
+	tt.Frame()
+	if a.trkPick {
+		t.Error("turning downloads off left the list in choice mode")
+	}
+	// A click plays again, rather than choosing.
+	if err := tt.Click("宝船"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if q := a.pl.Queue(); len(q) != 2 || a.pl.Current() == nil || a.pl.Current().ID != 2 {
+		t.Error("a click with downloads off chose the song instead of playing it")
+	}
+}
+
+// A finished row has room for its buttons: at the smallest window the three
+// of them are their own size, and clear of the level beside them. Squeezed,
+// the one furthest along was too small to aim at.
+func TestRowActionsFitAtTheSmallestWindow(t *testing.T) {
+	a, dir := downloadsApp(t)
+	file := filepath.Join(dir, "晴天.flac")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.dl.Restore([]download.Task{{ID: "a@lossless", Track: song(1, "晴天", "周杰伦"), Level: "lossless", Served: "lossless",
+		Status: download.Done, Path: file, Dir: dir}})
+	a.route = route{page: pageDownloads}
+	tt := ui.NewTester(a.view, 880, 800)
+	tt.Frame()
+	row, ok := tt.Find("晴天")
+	if !ok {
+		t.Fatal("the row is not there")
+	}
+	tt.Move(row.X+120, row.Y+row.H/2)
+	tt.Frame()
+	tt.Frame()
+	play, ok1 := tt.Find("播放已下载的文件")
+	more, ok2 := tt.Find("更多")
+	level, ok3 := tt.Find("无损")
+	if !ok1 || !ok2 || !ok3 {
+		t.Fatalf("the row's controls are not all there: play %v, more %v, level %v", ok1, ok2, ok3)
+	}
+	if play.W < 30 || more.W < 30 {
+		t.Errorf("the buttons are squeezed: play %.0f, more %.0f", play.W, more.W)
+	}
+	if play.X < level.X+level.W {
+		t.Errorf("the buttons run into the level: level ends at %.0f, play at %.0f", level.X+level.W, play.X)
+	}
+}
