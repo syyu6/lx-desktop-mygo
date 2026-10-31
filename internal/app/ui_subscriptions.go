@@ -448,7 +448,7 @@ func (a *app) subscribeControls(c *ui.Context, pl *netease.Playlist) {
 		return
 	}
 	b := pillButton(c.Key("subscribe"), iconCheck, "已订阅", p.hover.Over(p.bg), p.text)
-	b.Menu(func(m *ui.Menu) {
+	b.PopoverMenuButton(func(m *ui.Menu) {
 		if m.Item("刷新歌单").Chosen() {
 			a.syncSubscription(sub)
 		}

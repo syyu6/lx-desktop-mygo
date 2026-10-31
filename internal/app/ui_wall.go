@@ -329,7 +329,7 @@ func rowSwayTarget(r int, now time.Time) (float32, time.Duration) {
 // ringed, and the one under the pointer says what it is.
 func (a *app) wallTile(c *ui.Context, tr *netease.Track, i int, x float32, playing, hovered bool, lift float32) {
 	tile := ui.Box(c.Key(i)).Absolute().Left(x).Top(0).Size(wallTile, wallTile).Radius(12).
-		Label(tr.Name).ContextMenu(a.songItems(tr, 0))
+		Label(tr.Name).PopoverMenu(a.songItems(tr, 0))
 	tile.AnimatePose(ui.Pose{Scale: lift}, ui.Animation{Spring: ui.SpringOptions{Duration: 400 * time.Millisecond, Bounce: 0.2}})
 	if !tr.Playable() {
 		tile.Opacity(0.4)

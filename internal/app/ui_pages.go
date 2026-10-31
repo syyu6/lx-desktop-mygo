@@ -311,7 +311,7 @@ func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
 				}
 				if mine := a.editable(pl.ID); mine != nil {
 					more := iconButton(c.Key("more"), iconMore, 18, p.muted, "更多")
-					more.Menu(func(m *ui.Menu) {
+					more.PopoverMenuButton(func(m *ui.Menu) {
 						if m.Item("重命名…").Chosen() {
 							a.startRename(mine)
 						}
@@ -379,7 +379,7 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 		// By its identity among the sources': two of them may number their
 		// songs alike, and a search lists both.
 		row := ui.ButtonBase(c.Key(tr.Ident())).Height(54).PaddingX(12).Gap(14).Radius(10).AlignItems(ui.Center).FocusRing(false).Label(tr.Name).
-			ContextMenu(a.songItems(tr, pid))
+			PopoverMenu(a.songItems(tr, pid))
 		hovered := row.Hovered()
 		chosen := a.downloadEnabled() && a.trkSelected(tr)
 		bg := ui.Transparent

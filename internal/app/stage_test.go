@@ -18,8 +18,8 @@ func TestStageStyleMenu(t *testing.T) {
 		if err := tt.Click("律动效果"); err != nil {
 			t.Fatal(err)
 		}
-		if err := tt.ChooseMenuItem(c.item); err != nil {
-			t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+		if err := tt.Click(c.item); err != nil {
+			t.Fatalf("%v; the window shows %q", err, tt.Texts())
 		}
 		tt.Frame()
 		if a.settings.StageStyle != c.want {
@@ -39,8 +39,8 @@ func TestStageSparksMenu(t *testing.T) {
 		if err := tt.Click("律动效果"); err != nil {
 			t.Fatal(err)
 		}
-		if err := tt.ChooseMenuItem("火花"); err != nil {
-			t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+		if err := tt.Click("火花"); err != nil {
+			t.Fatalf("%v; the window shows %q", err, tt.Texts())
 		}
 		tt.Frame()
 		if a.settings.StageSparks != want || a.settings.StageStyle != "tilt" {
@@ -76,8 +76,8 @@ func TestStageFontSizeMenu(t *testing.T) {
 		if err := tt.Click("律动效果"); err != nil {
 			t.Fatal(err)
 		}
-		if err := tt.ChooseMenuItem(c.item); err != nil {
-			t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+		if err := tt.Click(c.item); err != nil {
+			t.Fatalf("%v; the window shows %q", err, tt.Texts())
 		}
 		tt.Frame()
 		if a.settings.LyricScale != c.want {

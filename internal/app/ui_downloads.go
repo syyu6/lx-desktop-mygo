@@ -409,7 +409,7 @@ func (a *app) dlRow(c *ui.Context, t *download.Task, tasks []download.Task, i in
 	playing := cur != nil && cur.Ident() == t.Track.Ident() && t.Status == download.Done
 	chosen := a.dlSel.Has(t.ID)
 	row := ui.ButtonBase(c.Key(t.ID)).Height(64).PaddingX(10).Gap(12).Radius(10).AlignItems(ui.Center).FocusRing(false).Label(t.Track.Name).
-		ContextMenu(a.dlItems(t))
+		PopoverMenu(a.dlItems(t))
 	hovered := row.Hovered()
 	bg := ui.Transparent
 	switch {
@@ -455,12 +455,11 @@ func (a *app) dlRow(c *ui.Context, t *download.Task, tasks []download.Task, i in
 			}
 		})
 		// What may be done with it, under the pointer or once chosen, so
-		// that quiet rows stay quiet. Built either way, and only hidden:
-		// mygo hands the item chosen from a menu back to the element that
-		// opened it on a later frame, and a menu takes the pointer off its
-		// row as it opens — an element built only under the pointer has
-		// gone by then, and its choice is dropped, which left 「删除任务和
-		// 文件」 doing nothing at all.
+		// that quiet rows stay quiet. Built either way, and only hidden: a
+		// menu takes the pointer off its row as it opens, and mygo drops
+		// the menu of an element it does not build — one built only under
+		// the pointer has gone by then, which left 「删除任务和文件」
+		// doing nothing at all.
 		// A finished row shows three of them, and a squeezed row squeezes
 		// its buttons until the one furthest along is too small to aim at:
 		// the slot is the three buttons' own width, at the row's gap.
@@ -610,7 +609,7 @@ func (a *app) dlRowActions(c *ui.Context, t *download.Task) {
 			a.dl.Retry(t.ID)
 		}
 	}
-	iconButton(c.Key("more"), iconMore, 14, p.muted, "更多").Menu(a.dlItems(t))
+	iconButton(c.Key("more"), iconMore, 14, p.muted, "更多").PopoverMenuButton(a.dlItems(t))
 }
 
 // dlItems builds the menu of a task: what its row's actions do, and the

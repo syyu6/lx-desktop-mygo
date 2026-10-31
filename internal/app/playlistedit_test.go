@@ -42,19 +42,32 @@ func TestAddSongToPlaylist(t *testing.T) {
 	defer func() { addToPlaylist = netease.AddToPlaylist }()
 
 	a := editTestApp()
+	// Folded away, the sidebar's lists do not name the playlists: what the
+	// window shows of them is the menu's alone.
+	a.mineCollapsed = true
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
+	// 通勤's page names it in its header; the others show nowhere yet.
+	before := textCount(tt, "通勤")
 	if err := tt.RightClick("宝船"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("添加到歌单", "通勤"); err == nil {
-		t.Error("offered to add the song to the playlist it is in")
+	if err := tt.Click("添加到歌单"); err != nil {
+		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("添加到歌单", "小明喜欢的音乐"); err == nil {
-		t.Error("offered to add the song to the liked songs")
+	// The submenu lists the playlists the song can go to, but neither the
+	// liked songs nor the one it is listed in.
+	if got := textCount(tt, "通勤"); got != before {
+		t.Errorf("offered to add the song to 通勤, the playlist it is in")
 	}
-	if err := tt.ChooseMenuItem("添加到歌单", "睡前"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if textCount(tt, "小明喜欢的音乐") != 0 {
+		t.Errorf("offered to add the song to the liked songs: %q", tt.Texts())
+	}
+	if !tt.HasText("新建歌单…") || !tt.HasText("睡前") {
+		t.Fatalf("the submenu shows %q", tt.Texts())
+	}
+	if err := tt.Click("睡前"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Frame()
 	if got := <-calls; got != (add{11, 2}) {
@@ -78,8 +91,8 @@ func TestRemoveSongFromPlaylist(t *testing.T) {
 	if err := tt.RightClick("宝船"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("从歌单中移除"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if err := tt.Click("从歌单中移除"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Frame()
 	if got := <-calls; got != (del{10, 2}) {
@@ -103,7 +116,7 @@ func TestNoRemovingFromSavedPlaylist(t *testing.T) {
 	if err := tt.RightClick("宝船"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("从歌单中移除"); err == nil {
+	if tt.HasText("从歌单中移除") {
 		t.Error("offered to remove a song from a saved playlist")
 	}
 }
@@ -143,8 +156,11 @@ func TestCreatePlaylistForSong(t *testing.T) {
 	if err := tt.RightClick("宝船"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("添加到歌单", "新建歌单…"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if err := tt.Click("添加到歌单"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("新建歌单…"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Frame()
 	if !a.naming.open || a.naming.add == nil || a.naming.add.ID != 2 {
@@ -171,8 +187,8 @@ func TestRenamePlaylist(t *testing.T) {
 	if err := tt.RightClick("睡前"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("重命名…"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if err := tt.Click("重命名…"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Advance(300 * time.Millisecond)
 	tt.Frame()
@@ -201,7 +217,7 @@ func TestNoRenamingLikedSongs(t *testing.T) {
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 	tt.RightClick("小明喜欢的音乐")
-	if err := tt.ChooseMenuItem("重命名…"); err == nil {
+	if tt.HasText("重命名…") {
 		t.Error("offered to rename the liked songs")
 	}
 }
@@ -222,8 +238,8 @@ func TestDeletePlaylist(t *testing.T) {
 	if err := tt.Click("更多"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("删除歌单…"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if err := tt.Click("删除歌单…"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Advance(300 * time.Millisecond)
 	tt.Frame()
@@ -260,8 +276,8 @@ func TestCancelDeletingPlaylist(t *testing.T) {
 	if err := tt.RightClick("睡前"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("删除歌单…"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if err := tt.Click("删除歌单…"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Advance(300 * time.Millisecond)
 	tt.Frame()

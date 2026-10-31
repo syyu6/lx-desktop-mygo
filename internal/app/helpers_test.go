@@ -1,6 +1,8 @@
 package app
 
 import (
+	"github.com/egoist/mygo/ui"
+
 	"netease-music-mygo/internal/netease"
 	"netease-music-mygo/internal/player"
 )
@@ -29,4 +31,17 @@ func openSettingsTab(a *app, page settingsPage) {
 		}
 	}
 	panic("no settings tab shows that page")
+}
+
+// textCount is how many elements show exactly s. A drawn menu's items are
+// elements too, so this is how a test says a menu does or does not offer
+// something the rest of the window shows as well.
+func textCount(tt *ui.Tester, s string) int {
+	n := 0
+	for _, text := range tt.Texts() {
+		if text == s {
+			n++
+		}
+	}
+	return n
 }

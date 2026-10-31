@@ -1,7 +1,6 @@
 package app
 
 import (
-	"slices"
 	"testing"
 	"time"
 
@@ -34,8 +33,8 @@ func TestSongMenuCopies(t *testing.T) {
 		if err := tt.Click("更多"); err != nil {
 			t.Fatal(err)
 		}
-		if err := tt.ChooseMenuItem(c.item); err != nil {
-			t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+		if err := tt.Click(c.item); err != nil {
+			t.Fatalf("%v; the window shows %q", err, tt.Texts())
 		}
 		tt.Frame()
 		if copied != c.want {
@@ -63,10 +62,12 @@ func TestSongMenuOnRightClick(t *testing.T) {
 	if err := tt.RightClick("宝船"); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := tt.Menu(), []string{"复制歌名", "复制歌名和歌手", "-", "复制链接"}; !slices.Equal(got, want) {
-		t.Fatalf("the menu shows %q, want %q", got, want)
+	for _, item := range []string{"复制歌名", "复制歌名和歌手", "复制链接"} {
+		if !tt.HasText(item) {
+			t.Errorf("the menu offers no %s: %q", item, tt.Texts())
+		}
 	}
-	if err := tt.ChooseMenuItem("复制链接"); err != nil {
+	if err := tt.Click("复制链接"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()

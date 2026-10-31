@@ -481,7 +481,7 @@ func (a *app) myPlaylists(c *ui.Context, title string, lists []netease.Playlist,
 			ui.Text(c, pl.Name).FontSize(13).SingleLine().Shrink(1).MinWidth(0)
 		})
 		if mine && pl.SpecialType != 5 {
-			b.ContextMenu(func(m *ui.Menu) {
+			b.PopoverMenu(func(m *ui.Menu) {
 				if m.Item("重命名…").Chosen() {
 					a.startRename(pl)
 				}
@@ -492,7 +492,7 @@ func (a *app) myPlaylists(c *ui.Context, title string, lists []netease.Playlist,
 			})
 		}
 		if sub := a.followed(pl); sub != nil {
-			b.ContextMenu(func(m *ui.Menu) {
+			b.PopoverMenu(func(m *ui.Menu) {
 				if m.Item("刷新歌单").Chosen() {
 					a.syncSubscription(sub)
 				}

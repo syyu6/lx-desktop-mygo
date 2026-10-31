@@ -125,7 +125,7 @@ func (a *app) trkDownloadButton(c *ui.Context, tracks []netease.Track) {
 		more := half("download-more", "批量下载")
 		more.Padding(0, 10)
 		more.Children(func() { ui.Icon(c, iconChevron).Size(13, 13).TextColor(p.muted) })
-		more.Menu(func(m *ui.Menu) {
+		more.PopoverMenuButton(func(m *ui.Menu) {
 			if m.Item("批量下载…").Chosen() {
 				a.trkPickOn()
 			}

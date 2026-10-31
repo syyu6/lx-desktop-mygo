@@ -41,11 +41,11 @@ func TestDownloadedFilePlaysNextTime(t *testing.T) {
 	}
 }
 
-// The row's 更多 opens a menu whose item must reach the row: mygo hands the
-// choice back to the element on a later frame, and a menu takes the pointer
-// off its row as it opens, so the row's buttons must stay built. They were
-// built only while the pointer was on the row, and 「删除任务和文件」 did
-// nothing.
+// The row's 更多 opens a menu whose item must reach the row: a menu takes
+// the pointer off its row as it opens, and mygo drops the menu of an
+// element it does not build, so the row's buttons must stay built. They
+// were built only while the pointer was on the row, and 「删除任务和文件」
+// did nothing.
 func TestRowMenuChoiceDeletesTheTaskAndFile(t *testing.T) {
 	trashed := ""
 	real := trashFile
@@ -79,8 +79,8 @@ func TestRowMenuChoiceDeletesTheTaskAndFile(t *testing.T) {
 	tt.Move(60, 400)
 	tt.Frame()
 
-	if err := tt.ChooseMenuItem("删除任务和文件"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if err := tt.Click("删除任务和文件"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Frame()
 	if len(a.dl.Tasks()) != 0 {
@@ -109,8 +109,8 @@ func TestChoosingSongsWithBoxes(t *testing.T) {
 	if err := tt.Click("批量下载"); err != nil {
 		t.Fatalf("the 下载 pill has no chevron: %v", err)
 	}
-	if err := tt.ChooseMenuItem("批量下载…"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if err := tt.Click("批量下载…"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Frame()
 	if !a.trkPick {
@@ -157,8 +157,8 @@ func TestChoosingEverySong(t *testing.T) {
 	if err := tt.Click("批量下载"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("全选"); err != nil {
-		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	if err := tt.Click("全选"); err != nil {
+		t.Fatalf("%v; the window shows %q", err, tt.Texts())
 	}
 	tt.Frame()
 	if got := len(a.trkChosenSongs(tracks)); got != len(tracks) {
