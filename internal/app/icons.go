@@ -56,6 +56,7 @@ var (
 	iconPlus    = strokeIcon(`<path d="M12 5v14"/><path d="M5 12h14"/>`)
 	iconCheck   = strokeIcon(`<path d="m5 12 4 4L19 6"/>`)
 	iconX       = strokeIcon(`<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`)
+	iconChevron = strokeIcon(`<path d="m6 9 6 6 6-6"/>`)
 	iconMore    = fillIcon(`<circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/>`)
 )
 
@@ -74,4 +75,9 @@ var (
 	// iconPalette is the appearance's tab: a painter's palette and its
 	// thumbhole, the colors it is.
 	iconPalette = strokeIcon(`<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.9 1.8-2 0-.6-.3-1.1-.3-1.7 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8.5-9-8.5z"/><circle cx="7.5" cy="10.5" r="1.1"/><circle cx="12" cy="7.5" r="1.1"/><circle cx="16.5" cy="10.5" r="1.1"/>`)
+	// iconDownload is the download page's tab and a running song: an arrow
+	// into a tray, which is what saving a song does.
+	iconDownload = strokeIcon(`<path d="M12 3v12"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>`)
+	// iconFolder opens a song's folder.
+	iconFolder = strokeIcon(`<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`)
 )

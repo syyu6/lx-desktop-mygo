@@ -207,6 +207,7 @@ func (a *app) view(c *ui.Context) {
 	a.playlistNameDialog(c)
 	a.deletePlaylistDialog(c)
 	a.subscribeDialogView(c)
+	a.qualityDialog(c)
 	if a.toast != "" {
 		c.Toast(a.toast)
 		a.toast = ""
@@ -237,6 +238,7 @@ func (a *app) mainPanes(c *ui.Context) {
 			// positioned, they paint over it.
 			a.pageTop(c)
 			a.playerBar(c)
+			a.trkBar(c)
 		})
 	}
 	if !shown {
@@ -427,6 +429,12 @@ func (a *app) sidebar(c *ui.Context) {
 			}
 			if a.searched.query != "" {
 				a.navItem(c, iconSearch, "搜索结果", a.searched)
+			}
+			// Downloads, once the listener turned them on: the page keeps
+			// the songs being saved and those that were, and with them off
+			// its entry is gone rather than leading to an empty page.
+			if a.downloadEnabled() {
+				a.navItem(c, iconDownload, "下载管理", route{page: pageDownloads})
 			}
 			// The playlists are lists of names: folded, the rail keeps the
 			// pages, and they come back with it.
@@ -753,6 +761,14 @@ func (a *app) content(c *ui.Context) {
 		})
 		return
 	}
+	// Downloads turned off while their page was open: the page says where
+	// to turn them back on, and the tasks wait.
+	if a.route.page == pageDownloads && !a.downloadEnabled() {
+		a.centered(c, "下载已在设置中关闭，打开后可以继续下载", func() {
+			a.openSettingsOn(settingsDownload)
+		})
+		return
+	}
 	switch a.route.page {
 	case pageHome:
 		a.homePage(c)
@@ -778,6 +794,8 @@ func (a *app) content(c *ui.Context) {
 		a.podcastsPage(c)
 	case pageSonglists:
 		a.songlistsPage(c)
+	case pageDownloads:
+		a.downloadsPage(c)
 	}
 }
 

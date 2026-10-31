@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -71,6 +74,14 @@ type Player struct {
 	// song still waiting for its first bytes when it takes over starts
 	// late. The song is kept waiting, not played, until its turn.
 	Prefetch func() bool
+	// KeptFile returns a song's file, when the listener saved it and it
+	// is still there: it plays from there rather than from the sources, as
+	// the file they chose to keep is the one they hear — no traffic, and
+	// the level they picked when they asked for the download. The cache is
+	// still looked at first, which keeps every level it was played at.
+	// The app sets it; a test without it plays from the cache and sources,
+	// as one without downloads does.
+	KeptFile func(t netease.Track) (path, level string, ok bool)
 
 	queue   []netease.Track
 	order   []int // the queue's indices in play order: shuffled or not
@@ -103,6 +114,17 @@ type Player struct {
 	// plays, and kept for its turn: see startAhead. Only the main thread
 	// makes or takes one.
 	ahead *aheadTrack
+
+	// local is a downloaded file to play instead of the source's stream,
+	// once: the song the download page's 播放已下载的文件 asks for, which
+	// names the file even where the task's own record is gone. It is taken
+	// as that song loads and then dropped; a song downloaded and still on
+	// the disk plays from its file regardless, which is KeptFile's doing.
+	// open reads it off the main thread, hence the lock.
+	localMu sync.Mutex
+	local   struct {
+		ident, path, level string
+	}
 
 	lyrics       []lyrics.Line
 	lyricsLoaded bool
@@ -310,6 +332,18 @@ func (p *Player) refill() {
 func (p *Player) awaitFeed() {
 	p.awaiting = true
 	p.refill()
+}
+
+// Append adds tracks to the end of the queue, those it does not have: what
+// a list of songs chosen asks for, without playing them now.
+func (p *Player) Append(tracks []netease.Track) {
+	if len(tracks) == 0 {
+		return
+	}
+	p.appendTracks(tracks)
+	if p.post != nil {
+		p.post(func() {})
+	}
 }
 
 // appendTracks adds tracks to the end of the queue, but those in it.
@@ -806,6 +840,55 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	}()
 }
 
+// PlayFile plays t from path, the file a download made, at the level kept:
+// the download page's 播放已下载的文件. It is how the page names its file,
+// whatever the tasks say of it — one whose record went, or whose file the
+// listener moved. The file plays in place of the queue, and the song's
+// lyrics and cover come from the sources as they would: only its sound is
+// the file's. A file that will not open falls back to the sources at the
+// level the settings say.
+func (p *Player) PlayFile(t netease.Track, path, level string) {
+	p.localMu.Lock()
+	p.local.ident, p.local.path, p.local.level = t.Ident(), path, level
+	p.localMu.Unlock()
+	p.PlayQueue([]netease.Track{t}, 0)
+}
+
+// takeLocal returns the downloaded file waiting for t, if it is the one
+// asked for, and takes it: it plays once.
+func (p *Player) takeLocal(t netease.Track) (path, level string) {
+	p.localMu.Lock()
+	defer p.localMu.Unlock()
+	if p.local.ident != t.Ident() {
+		return "", ""
+	}
+	path, level = p.local.path, p.local.level
+	p.local.ident = ""
+	return path, level
+}
+
+// openFile opens the file at path as t's song: an MP3, FLAC or AAC, by its
+// own bytes, which is what the player asks of any file. Its level is the
+// extension's, which says nothing of the level it was kept at: the caller
+// sets that.
+func openFile(path string, t netease.Track) (*netease.Stream, stream, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	s, err := openStream(opened(f, st.Size()), t.Duration)
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return &netease.Stream{Size: st.Size(), Type: strings.TrimPrefix(filepath.Ext(path), ".")}, s, nil
+}
+
 // open opens track t's audio at level: kept in the cache, or else
 // streamed into it, and kept once it has all come in.
 //
@@ -820,6 +903,16 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 // saying they have no address at all end the song's chances, as they did
 // before.
 func (p *Player) open(t netease.Track, level string, ahead bool) (*netease.Stream, stream, string, error) {
+	// A downloaded song plays from its own file, which the listener asked
+	// for by name: it is the song as they chose it, at the level they
+	// chose, and needs no source. A file that does not open gives way to
+	// the sources below.
+	if path, kept := p.takeLocal(t); path != "" {
+		if info, s, err := openFile(path, t); err == nil {
+			info.Level = kept
+			return info, s, t.Src(), nil
+		}
+	}
 	// The cache names a song by its source and its id there, so that two
 	// sources' songs of one number stay apart.
 	name := cacheName(t)
@@ -832,6 +925,19 @@ func (p *Player) open(t netease.Track, level string, ahead bool) (*netease.Strea
 				return info, s, t.Src(), nil
 			}
 			f.Close()
+		}
+	}
+	// A song the listener downloaded plays from its file, which is the
+	// level they kept rather than the one playing asks for: they chose it
+	// when they asked. It needs no source, and no network. The cache is
+	// asked first, as it is the song's own bytes at the level playing
+	// wants; a file that will not open gives way to the sources below.
+	if p.KeptFile != nil {
+		if path, kept, ok := p.KeptFile(t); ok {
+			if info, s, err := openFile(path, t); err == nil {
+				info.Level = kept
+				return info, s, t.Src(), nil
+			}
 		}
 	}
 	// skip is the link whose address did not open: the next try leaves it

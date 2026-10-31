@@ -447,7 +447,7 @@ func roundButton(c *ui.Context, size float32, color ui.Color, label string) ui.E
 
 // pillButton is a rounded button with an icon and a label.
 func pillButton(c *ui.Context, icon *ui.SVG, label string, bg, fg ui.Color) ui.Element {
-	b := ui.ButtonBase(c).Height(36).PaddingX(18).Gap(8).Radius(999).AlignItems(ui.Center).TextColor(fg)
+	b := ui.ButtonBase(c).Height(36).PaddingX(18).Gap(8).Radius(999).AlignItems(ui.Center).TextColor(fg).Shrink(0)
 	fill := bg
 	if b.Hovered() {
 		fill = bg.Mix(ui.RGB(255, 255, 255), 0.12)

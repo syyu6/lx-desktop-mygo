@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -76,45 +75,56 @@ func init() {
 	httpClient.Jar, _ = cookiejar.New(nil)
 }
 
-// adoptOnce keeps the read of the keychain's entry to one a process, and
-// nothing at all once the session is in its file.
-var adoptOnce sync.Once
+// keychainGet reads an item of the system's keychain: a test replaces it,
+// as the Keychain would ask the listener of a test.
+var keychainGet = mygo.Secrets.Get
 
-// adoptKeychainSession takes the session a release before 0.1.26 kept in
-// the keychain, once, into the file it is kept in now: the listener stays
-// signed in across the update instead of being asked to sign in again.
+// ErrNoOldLogin says there is no login of a release before 0.1.26 in the
+// keychain to take.
+var ErrNoOldLogin = errors.New("netease: no login left in the keychain")
+
+// AdoptKeychainSession takes the session a release before 0.1.26 kept in
+// the keychain into the file it is kept in now, and reports whether there
+// was one.
 //
-// The Keychain asks before letting this binary read the entry, as it asks
-// of every new binary — so the first launch after this update asks, for the
-// last time. It is left in place rather than deleted: deleting it needs the
+// It is not called on launch. The Keychain lets a binary read an item only
+// after asking the listener, and this app is signed ad hoc, so every
+// release is a binary the Keychain has not seen: reading on launch is what
+// put "LxMuc wants to use your confidential information stored in …" in
+// front of every update. The login dialog offers it instead, so that the
+// system's question follows a click the listener made for it.
+//
+// The entry is left in place rather than deleted: deleting it needs the
 // item's ACL opened as well, which asks again for a listener who chose
-// "Allow" over "Always Allow", and two prompts are worse than an entry
+// "Allow" over "Always Allow", and two questions are worse than an entry
 // nothing reads any more.
-func adoptKeychainSession() []byte {
-	var adopted []byte
-	adoptOnce.Do(func() {
-		b, err := mygo.Secrets.Get(sessionSecret)
-		if err != nil || len(b) == 0 {
-			return
-		}
-		if err := writeSession(b); err != nil {
-			return
-		}
-		adopted = b
-	})
-	return adopted
+func AdoptKeychainSession() (bool, error) {
+	b, err := keychainGet(sessionSecret)
+	if errors.Is(err, mygo.ErrSecretNotFound) || (err == nil && len(b) == 0) {
+		return false, ErrNoOldLogin
+	}
+	if err != nil {
+		return false, fmt.Errorf("netease: reading the keychain: %w", err)
+	}
+	if err := writeSession(b); err != nil {
+		return false, err
+	}
+	return restoreCookies(b), nil
 }
 
 // RestoreSession puts the session from its file in the cookie jar, and
 // reports whether there was one.
 func RestoreSession() bool {
 	b, err := readSession()
-	if err == nil && len(b) == 0 {
-		// Signed in by a release before 0.1.26, which kept it in the
-		// keychain: taken from there once, and put where it is kept now.
-		b = adoptKeychainSession()
-	}
 	if err != nil || len(b) == 0 {
+		return false
+	}
+	return restoreCookies(b)
+}
+
+// restoreCookies puts the cookies the session is written as in the jar.
+func restoreCookies(b []byte) bool {
+	if len(b) == 0 {
 		return false
 	}
 	var cookies []*http.Cookie
@@ -128,7 +138,7 @@ func RestoreSession() bool {
 	return true
 }
 
-// SaveSession keeps the login cookies of the jar in the keychain.
+// SaveSession keeps the login cookies of the jar in its file.
 func SaveSession() error {
 	var parts []string
 	for _, c := range httpClient.Jar.Cookies(siteURL) {
@@ -142,7 +152,7 @@ func SaveSession() error {
 	return writeSession([]byte(strings.Join(parts, "; ")))
 }
 
-// ClearSession forgets the session, here and in the keychain.
+// ClearSession forgets the session, in the jar and in its file.
 func ClearSession() {
 	httpClient.Jar.SetCookies(siteURL, []*http.Cookie{
 		{Name: "MUSIC_U", Path: "/", MaxAge: -1},

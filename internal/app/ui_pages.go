@@ -302,6 +302,13 @@ func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
 					a.pl.PlayQueue(pl.Tracks, firstPlayable(pl.Tracks))
 				}
 				a.subscribeControls(c, pl)
+				if a.downloadEnabled() && len(pl.Tracks) > 0 {
+					// The whole list at once, at one quality asked for the
+					// batch: downloading a playlist a song at a time is no
+					// way to keep a playlist. Its chevron turns the list
+					// into one with boxes, to choose a few of them.
+					a.trkDownloadButton(c, pl.Tracks)
+				}
 				if mine := a.editable(pl.ID); mine != nil {
 					more := iconButton(c.Key("more"), iconMore, 18, p.muted, "更多")
 					more.Menu(func(m *ui.Menu) {
@@ -374,8 +381,11 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 		row := ui.ButtonBase(c.Key(tr.Ident())).Height(54).PaddingX(12).Gap(14).Radius(10).AlignItems(ui.Center).FocusRing(false).Label(tr.Name).
 			ContextMenu(a.songItems(tr, pid))
 		hovered := row.Hovered()
+		chosen := a.downloadEnabled() && a.trkSelected(tr)
 		bg := ui.Transparent
 		switch {
+		case chosen:
+			bg = p.accent.Alpha(0.12)
 		case playing:
 			bg = p.accent.Alpha(0.09)
 		case hovered:
@@ -386,8 +396,13 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 			row.Opacity(0.42)
 		}
 		row.Children(func() {
+			// In choice mode the place holds a box instead: a list read by
+			// the pointer says what a click does, where ⌘ is a modifier a
+			// hand on a mouse may not look for.
 			ui.Box(c).Width(26).Center().Children(func() {
 				switch {
+				case a.trkPick:
+					a.trkBox(c, chosen)
 				case playing:
 					a.nowPlayingBars(c)
 				case hovered && tr.Playable():
@@ -451,10 +466,36 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 			})
 			ui.Text(c, clock(tr.Length())).FontSize(12.5).FontFeatures("tnum").TextColor(p.faint).Width(44).TextAlign(ui.End)
 		})
-		if row.Clicked() && tr.Playable() {
-			a.pl.PlayQueue(tracks, i)
+		if row.Clicked() {
+			mods := row.ClickModifiers()
+			switch {
+			case mods&ui.Shift != 0 && a.downloadEnabled():
+				// Shift chooses the run of rows from the last one clicked to
+				// this: the way a list of files is chosen, for the few things
+				// that act on several songs at once.
+				a.trkPickOn()
+				a.trkExtend(tracks, i)
+			case mods&ui.Cmd != 0 && a.downloadEnabled():
+				a.trkPickOn()
+				a.trkToggle(tr)
+				a.trkLast = i
+			case a.trkPick:
+				// In choice mode a click chooses, rather than playing: the
+				// mode is what the listener asked the list for.
+				a.trkToggle(tr)
+				a.trkLast = i
+			case tr.Playable():
+				// A plain click plays the list from here, which is what a
+				// list of songs is for; a choice, if any, is done with.
+				a.trkClear()
+				a.pl.PlayQueue(tracks, i)
+			}
 		}
 	}).Grow(1).Padding(top+pageGap, pagePad-12, bottom+32, pagePad-12).ScrollbarInsets(top, 0, bottom, 0)
+	// What is chosen, kept for the bar over the player: it sits outside the
+	// list, so that it stays put as the list scrolls, and the list's own
+	// rows are what the choice is of.
+	a.trkChosenSongs(tracks)
 }
 
 // nowPlayingBars dance in the row of the track playing.

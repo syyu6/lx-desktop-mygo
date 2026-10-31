@@ -52,6 +52,18 @@ func (a *app) openSettings() {
 	a.syncDock()
 }
 
+// openSettingsOn shows the settings on the tab that shows page: what a page
+// asks for when it says where to turn something on.
+func (a *app) openSettingsOn(page settingsPage) {
+	for i, tab := range settingsTabs() {
+		if tab.page == page {
+			a.settingsTab = i
+			break
+		}
+	}
+	a.openSettings()
+}
+
 // settingsWindowSized puts a settings window that came back in full screen
 // or maximized back to its own size, around where it was: the state file
 // keeps that flag, and the window is made with it before there is a view to
@@ -283,6 +295,9 @@ func (a *app) settingsView(c *ui.Context) {
 					})
 				})
 
+			case settingsDownload:
+				a.downloadSettings(group, row, c)
+
 			case settingsSources:
 				a.sourceSettings(group, row, rowWith, c)
 
@@ -343,6 +358,7 @@ type settingsPage int
 const (
 	settingsGeneral settingsPage = iota
 	settingsPlay
+	settingsDownload
 	settingsSources
 	settingsLook
 )
@@ -356,12 +372,13 @@ type settingsTab struct {
 }
 
 // settingsTabs are the tabs across the top of the settings, in the order
-// they show: the app's own things, what plays, where songs come from, and
-// how it looks.
+// they show: the app's own things, what plays, where saved songs go, where
+// songs come from, and how it looks.
 func settingsTabs() []settingsTab {
 	return []settingsTab{
 		{label: "通用", icon: iconSettings, page: settingsGeneral},
 		{label: "播放", icon: iconHeadset, page: settingsPlay},
+		{label: "下载", icon: iconDownload, page: settingsDownload},
 		{label: "来源", icon: iconUpDown, page: settingsSources},
 		{label: "外观", icon: iconPalette, page: settingsLook},
 	}

@@ -7,7 +7,9 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/download"
 	"netease-music-mygo/internal/lxsource"
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 	"netease-music-mygo/internal/player"
 	"netease-music-mygo/internal/source"
@@ -29,6 +31,9 @@ const (
 	pagePodcast
 	pagePodcasts
 	pageSonglists
+	// pageDownloads is the download manager, shown only while downloads are
+	// on: with them off its sidebar entry is gone.
+	pageDownloads
 )
 
 type route struct {
@@ -179,6 +184,31 @@ type app struct {
 	settingsWin *mygo.Window
 	cacheUsed   int64 // the bytes the song cache takes, -1 until measured
 	updates     bool  // the update plugin is used (useUpdater)
+
+	// The downloads: the manager that runs them, and the page's own state,
+	// the tab shown and the tasks chosen (ui_downloads.go). dlChoices holds
+	// the quality the listener was asked for, once the page asks for
+	// several songs at once.
+	dl     *download.Manager
+	dlTab  int
+	dlList ui.ListState
+	dlSel  ui.Selection[string]
+	// dlLast is the row the choice was last extended from, which a
+	// Shift-click chooses from.
+	dlLast int
+	// dlAsk is the quality asked for a batch, and dlSongs the songs it is
+	// asked for: open while the dialog shows.
+	dlAsk dlQualityAsk
+	// trkSel and trkLast are the songs chosen in a track list, which is
+	// how several of them are downloaded at once; trkChosen keeps them in
+	// the order they are listed, for the bar that acts on them
+	// (ui_trackselect.go). trkPick is the list's choice mode: its 下载 pill
+	// switched it to boxes beside the songs, for a list read with the
+	// pointer rather than the keyboard.
+	trkSel    map[string]bool
+	trkLast   int
+	trkChosen []music.Track
+	trkPick   bool
 
 	// The sources the listener imported (lx.go): the scripts kept, what
 	// they say about themselves, and the resolver that runs them. srcErr
@@ -360,6 +390,12 @@ func Run() error {
 		a.loadSourceList()
 		a.keepSweeping()
 		a.loadRegistry()
+		// The downloads kept from the last session come back paused, and
+		// the page has its tasks from its first frame.
+		a.newDownloads()
+		// A song downloaded plays from its own file, before any source is
+		// asked: see player.KeptFile.
+		a.pl.KeptFile = a.keptFile
 		// The followed playlists are read as the window opens, their songs
 		// at hand, and fetched again once the pages can show them.
 		a.loadFollowed()

@@ -90,6 +90,9 @@ func (a *app) albumHeader(c *ui.Context, al *netease.AlbumProfile) {
 					}
 					a.pl.PlayQueue(al.Songs, firstPlayable(al.Songs))
 				}
+				if a.downloadEnabled() && len(al.Songs) > 0 {
+					a.trkDownloadButton(c, al.Songs)
+				}
 			})
 		})
 	})

@@ -109,6 +109,41 @@ func (c *Cache) lookup(name, level string) (*download, *netease.Stream, bool) {
 	return nil, nil, false
 }
 
+// Cached returns where the cache keeps a song it already has at level or a
+// better one, and the stream it was kept as. A download copies the file
+// from there rather than fetching the song again: the listener played it
+// already, and the bytes are on the disk. The file stays the cache's, so
+// that playing the song again is as quick as it was.
+func (c *Cache) Cached(t netease.Track, level string) (path string, st netease.Stream, ok bool) {
+	name := cacheName(t)
+	if c == nil || name == "" {
+		return "", netease.Stream{}, false
+	}
+	at := max(slices.Index(netease.Levels, level), 0)
+	for _, lv := range netease.Levels[at:] {
+		key := cacheKey(name, lv)
+		meta, err := os.ReadFile(filepath.Join(c.dir, key+".json"))
+		if err != nil {
+			continue
+		}
+		var kept netease.Stream
+		if json.Unmarshal(meta, &kept) != nil || !keepable(lv, kept.Type) {
+			continue
+		}
+		p := filepath.Join(c.dir, key+"."+kept.Type)
+		if info, err := os.Stat(p); err != nil || info.Size() != kept.Size {
+			continue
+		}
+		return p, kept, true
+	}
+	return "", netease.Stream{}, false
+}
+
+// Format returns the format of the song at path, as its own bytes say: mp3,
+// flac, m4a or aac, or "" for one that is none of them. What the app does
+// not decode, it does not keep in the cache, and does not save either.
+func Format(path, said string) string { return sniffType(path, said) }
+
 // download fetches the song of the stream st into the cache's folder,
 // under the name its track has there, and keeps it once it has all come
 // in. A song the cache would not keep still comes into a file, which goes

@@ -121,6 +121,43 @@ type settings struct {
 	// none.
 	Version int `json:"version,omitempty"`
 
+	// DownloadOn turns downloads on: off until the listener says so, since
+	// a folder they did not ask to be filled with music is their own
+	// business (ui_downloads.go, ui_settings_download.go).
+	DownloadOn bool `json:"downloadOn,omitempty"`
+	// DownloadPath is the folder saved songs go in: the Desktop until the
+	// listener picks another, as lx-music-desktop begins.
+	DownloadPath string `json:"downloadPath,omitempty"`
+	// DownloadName is the scheme a file is named by, with 歌名 and 歌手 for
+	// the song's name and its artists (download.NameFormats).
+	DownloadName string `json:"downloadName,omitempty"`
+	// DownloadQuality is the level a download asks for when the listener
+	// is not asked: single songs are asked about, whole albums and
+	// playlists are not. Empty means the level playing asks for.
+	DownloadQuality string `json:"downloadQuality,omitempty"`
+	// DownloadMax is how many songs download at once, from 1 to 6.
+	DownloadMax int `json:"downloadMax,omitempty"`
+	// DownloadSkip leaves a file whose name is already in the folder as it
+	// is, rather than saving a second copy beside it.
+	DownloadSkip bool `json:"downloadSkip"`
+	// DownloadOtherSource lets a download look for the song on the sources
+	// other than its own: a VIP song NetEase will not stream, found on
+	// another service, downloads as that service has it. Off, only its own
+	// source is asked, and a song it will not stream stays undownloaded.
+	DownloadOtherSource bool `json:"downloadOtherSource,omitempty"`
+	// EmbedCover puts the song's cover in the file's tags, and EmbedLyric
+	// its words, with their translation when EmbedTranslation is on.
+	// EmbedTranslation needs EmbedLyric.
+	EmbedCover       bool `json:"embedCover,omitempty"`
+	EmbedLyric       bool `json:"embedLyric,omitempty"`
+	EmbedTranslation bool `json:"embedTranslation,omitempty"`
+	// DownloadLrc writes the words beside the song as a .lrc, and
+	// DownloadLrcTranslation with them; DownloadLrcFormat is utf8, with a
+	// byte order mark, or gbk for players that read only that.
+	DownloadLrc            bool   `json:"downloadLrc,omitempty"`
+	DownloadLrcTranslation bool   `json:"downloadLrcTranslation,omitempty"`
+	DownloadLrcFormat      string `json:"downloadLrcFormat,omitempty"`
+
 	path string // where they were loaded from, and are saved to
 }
 
@@ -128,7 +165,12 @@ func defaultSettings() settings {
 	// The player's colors are the app's of its own: a fresh install follows
 	// the song that plays, and falls back to the system's colors while
 	// nothing does.
-	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "cover", Volume: 0.8, Normalize: true, Prefetch: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
+	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "cover", Volume: 0.8, Normalize: true, Prefetch: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true,
+		// Downloads ask, at three songs at once, and leave what is already
+		// saved; lx-music-desktop begins the same way. Covers go into the
+		// files, which every player shows, and words beside them.
+		DownloadName: "歌名 - 歌手", DownloadMax: 3, DownloadSkip: true, EmbedCover: true,
+		DownloadLrcFormat: "utf8"}
 }
 
 // migrate folds the settings an older version kept into the shape this one

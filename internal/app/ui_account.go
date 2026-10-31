@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"runtime"
 	"time"
 
@@ -21,16 +22,28 @@ type loginState struct {
 	avatar   string
 	err      string
 	finished bool
+	// restoring says the login of a release before 0.1.26 is being read
+	// from the keychain, which may have the system ask first, and
+	// restoreErr what came of it while the dialog stays open.
+	restoring  bool
+	restoreErr string
 }
 
-// boot signs in with the session in the keychain, if any, then loads the
-// home page for whoever is listening.
+// adoptOldLogin reads the login an older release kept in the keychain. A
+// test replaces it, as the Keychain would ask the listener of a test.
+var adoptOldLogin = netease.AdoptKeychainSession
+
+// accountOf asks NetEase who is signed in through the session it was given.
+var accountOf = netease.Account
+
+// boot signs in with the session in its file, if any, then loads the home
+// page for whoever is listening.
 func (a *app) boot() {
 	a.homeLoading = true
 	go func() {
 		var prof *netease.Profile
 		if netease.RestoreSession() {
-			p, err := netease.Account()
+			p, err := accountOf()
 			switch {
 			case err == nil && p == nil:
 				netease.ClearSession() // expired
@@ -104,7 +117,7 @@ func (a *app) pollLogin(gen int, key string) {
 			var prof *netease.Profile
 			if code == netease.QRConfirmed {
 				netease.SaveSession()
-				prof, _ = netease.Account()
+				prof, _ = accountOf()
 			}
 			done := make(chan bool, 1)
 			a.post(func() {
@@ -155,6 +168,58 @@ func (a *app) closeLoginSoon(gen int) {
 	}()
 }
 
+// restoreOldLogin takes the login a release before 0.1.26 left in the
+// keychain, once the listener asks for it: the Keychain asks them to let
+// this binary read it, and that question is theirs to answer rather than
+// one the app brings up on its own after an update.
+func (a *app) restoreOldLogin() {
+	l := &a.login
+	if l.restoring {
+		return
+	}
+	l.restoring, l.restoreErr = true, ""
+	gen := l.gen
+	go func() {
+		ok, err := adoptOldLogin()
+		var prof *netease.Profile
+		var acctErr error
+		if err == nil && ok {
+			prof, acctErr = accountOf()
+		}
+		a.post(func() { a.oldLoginRead(gen, err, prof, acctErr) })
+	}()
+}
+
+// oldLoginRead takes what reading the old login came of.
+func (a *app) oldLoginRead(gen int, err error, prof *netease.Profile, acctErr error) {
+	l := &a.login
+	l.restoring = false
+	if gen != l.gen {
+		return
+	}
+	switch {
+	case errors.Is(err, netease.ErrNoOldLogin):
+		l.restoreErr = "没有找到旧版本的登录，请扫码登录"
+	case err != nil:
+		// The system would not let this binary read it: the listener
+		// chose not to allow it, or never said.
+		l.restoreErr = "没有取得旧版本的登录，请扫码登录"
+	case acctErr != nil:
+		// The login is kept: the network may come back.
+		l.restoreErr = "无法确认旧版本的登录，请稍后再试或扫码登录"
+	case prof == nil:
+		// The login was there, but NetEase no longer knows it.
+		netease.ClearSession()
+		l.restoreErr = "旧版本的登录已失效，请扫码登录"
+	default:
+		l.finished, l.status = true, netease.QRConfirmed
+		a.signedIn(prof)
+		a.pickUp(prof.UserID)
+		a.closeLoginSoon(gen)
+	}
+}
+
+// signOut forgets the login, and the welcome of one that never opened.
 func (a *app) signOut() {
 	a.login.gen++
 	a.signedIn(nil)
@@ -174,6 +239,10 @@ func (a *app) loginDialog(c *ui.Context) {
 		switch {
 		case l.finished:
 			title, sub = "登录成功", "欢迎回来，"+a.profileName()
+		case l.restoring:
+			sub = "正在读取旧版本的登录…"
+		case l.restoreErr != "":
+			sub = l.restoreErr
 		case l.err != "":
 			sub = l.err
 		case l.status == netease.QRScanned:
@@ -188,7 +257,7 @@ func (a *app) loginDialog(c *ui.Context) {
 			if l.code != nil {
 				code := l.code
 				opacity := float32(1)
-				if l.status == netease.QRScanned || l.status == netease.QRExpired || l.finished || l.err != "" {
+				if l.status == netease.QRScanned || l.status == netease.QRExpired || l.finished || l.err != "" || l.restoring {
 					opacity = 0.12
 				}
 				ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Opacity(opacity).
@@ -217,7 +286,36 @@ func (a *app) loginDialog(c *ui.Context) {
 			})
 		})
 		ui.Text(c, "登录后，每日推荐与歌单将根据你的口味生成").FontSize(11.5).TextColor(p.faint).Margin(16, 0, 0, 0)
+		if !l.finished {
+			a.restoreOldLoginLink(c, p)
+		}
 	})
+}
+
+// restoreOldLoginLink offers the login a release before 0.1.26 kept in the
+// keychain. It is a quiet line under the dialog rather than a button beside
+// the code: few listeners have one, and the ones who do look for it after an
+// update signed them out. Not the accent, which the app uses for what is
+// wrong or worth warning about.
+func (a *app) restoreOldLoginLink(c *ui.Context, p palette) {
+	l := &a.login
+	b := ui.ButtonBase(c.Key("restore-login")).Height(24).PaddingX(8).Radius(6).FocusRing(false).
+		Label("从旧版本恢复登录").Tooltip("读取更新前留在钥匙串中的登录，系统会先询问是否允许")
+	bg := ui.Transparent
+	label := p.muted
+	if b.Hovered() {
+		bg, label = p.hover, p.text
+	}
+	b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
+	b.Children(func() {
+		ui.Text(c, "从旧版本恢复登录").FontSize(12).FontWeight(500).TextColor(label)
+	})
+	switch {
+	case l.restoring:
+		b.Disabled(true).Opacity(0.5)
+	case b.Clicked():
+		a.restoreOldLogin()
+	}
 }
 
 // drawQR draws a QR code in r, as crisp squares on white, inside a quiet

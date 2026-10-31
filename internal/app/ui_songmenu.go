@@ -5,6 +5,7 @@ import (
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -58,6 +59,15 @@ func (a *app) songItems(tr *netease.Track, pid int64) func(m *ui.Menu) {
 		}
 		if tr.Album.ID != 0 && m.Item("查看专辑："+tr.Album.Name).Chosen() {
 			a.openPage(route{page: pageAlbum, id: tr.Album.ID})
+		}
+		// Downloads, once the listener turned them on: one song is asked
+		// its quality, as an album or a playlist is asked for the whole
+		// batch.
+		if a.downloadEnabled() && tr.Playable() {
+			m.Separator()
+			if m.Item("下载…").Chosen() {
+				a.askDownload([]music.Track{*tr})
+			}
 		}
 		a.playlistItems(m, tr, pid)
 	}

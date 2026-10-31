@@ -67,8 +67,9 @@ if [[ -d $data ]]; then
 	done
 fi
 
-# The installed build keeps the login in the Keychain, the development one
-# in the session file above.
+# Both builds keep the login in the session file above; a login an older
+# release left in the Keychain is read only when asked for, and would
+# otherwise restore what this reset just cleared.
 if [[ $release == 1 && $keep_login == 0 ]]; then
 	if security delete-generic-password -s "$id" -a netease-session >/dev/null 2>&1; then
 		echo "removed the login from the Keychain"

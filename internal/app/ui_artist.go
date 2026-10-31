@@ -394,6 +394,9 @@ func (a *app) artistHeader(c *ui.Context, d *artistData) {
 					}
 					a.pl.PlayQueue(songs, firstPlayable(songs))
 				}
+				if a.downloadEnabled() && len(songs) > 0 {
+					a.trkDownloadButton(c, songs)
+				}
 				icon, label := iconPlus, "关注"
 				if ar.Followed {
 					icon, label = iconCheck, "已关注"

@@ -202,8 +202,8 @@ func Available() bool {
 func platform() string { return runtime.GOOS + "-" + runtime.GOARCH }
 
 // verifyLibs checks the libraries in dir are those downloaded. They run in
-// the app, with what it may reach, as the login in the Keychain: one
-// changed since, by whatever could write there, is not loaded.
+// the app, with what it may reach: one changed since, by whatever could
+// write there, is not loaded.
 func verifyLibs(dir string) error {
 	for _, f := range natives() {
 		if digest(filepath.Join(dir, f.name)) != f.sha256 {

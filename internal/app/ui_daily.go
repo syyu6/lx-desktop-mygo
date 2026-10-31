@@ -525,6 +525,9 @@ func (a *app) dailyPage(c *ui.Context) {
 						}
 						a.pl.PlayQueue(songs, firstPlayable(songs))
 					}
+					if a.downloadEnabled() && len(songs) > 0 {
+						a.trkDownloadButton(c, songs)
+					}
 				})
 			})
 		})

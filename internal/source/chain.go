@@ -171,6 +171,20 @@ func (c *Chain) Resolve(t music.Track, level string) (Resolution, error) {
 //
 // skip is the id of a link to leave out, or "" for every link.
 func (c *Chain) ResolveExcept(t music.Track, level, skip string) (Resolution, error) {
+	return c.resolveIn(t, level, skip, true)
+}
+
+// Own returns where t streams from at level on its own source alone, or
+// the reason it does not: what a download asks when the listener did not
+// let it look for the song on the other sources. A song of a source that
+// has none of the others' recordings plays the same either way.
+func (c *Chain) Own(t music.Track, level string) (Resolution, error) {
+	return c.resolveIn(t, level, "", false)
+}
+
+// resolveIn walks the chain for t, looking for it on the other sources when
+// elsewhere.
+func (c *Chain) resolveIn(t music.Track, level, skip string, elsewhere bool) (Resolution, error) {
 	links := c.linksNow()
 	if len(links) == 0 {
 		return Resolution{}, ErrNoSource
@@ -178,7 +192,13 @@ func (c *Chain) ResolveExcept(t music.Track, level, skip string) (Resolution, er
 	if skip != "" {
 		links = withoutLink(links, skip)
 	}
-	res, err := c.resolve(links, t, level)
+	var res Resolution
+	var err error
+	if elsewhere {
+		res, err = c.resolve(links, t, level)
+	} else {
+		res, err = c.resolveOwn(links, t, level)
+	}
 	if err != nil {
 		return Resolution{}, err
 	}
@@ -226,6 +246,15 @@ func (c *Chain) resolve(links []Link, t music.Track, level string) (Resolution, 
 		if res, ok := tryOwn(links, found, level); ok {
 			return res, nil
 		}
+	}
+	return Resolution{}, ErrNotPlayable
+}
+
+// resolveOwn walks the links for t's own source alone: what a download
+// asks when it may not look elsewhere.
+func (c *Chain) resolveOwn(links []Link, t music.Track, level string) (Resolution, error) {
+	if res, ok := tryOwn(links, t, level); ok {
+		return res, nil
 	}
 	return Resolution{}, ErrNotPlayable
 }
