@@ -54,16 +54,27 @@ func (a *app) loadLiked(uid int64) {
 			if err != nil || a.profile == nil || a.profile.UserID != uid {
 				return
 			}
-			for k := range a.liked {
-				if strings.HasPrefix(k, music.SourceNetease+"/") {
-					delete(a.liked, k)
-				}
-			}
-			for _, id := range ids {
-				a.liked[music.SourceNetease+"/"+strconv.FormatInt(id, 10)] = true
-			}
+			a.setLikedOf(music.SourceNetease, ids)
 		})
 	}()
+}
+
+// setLikedOf replaces one source's share of what is liked with ids. The map
+// is made if it is not there: signing in empties it (signedIn), and the
+// answer to a list asked for before that arrives after it, finding nothing
+// to write into.
+func (a *app) setLikedOf(src string, ids []int64) {
+	if a.liked == nil {
+		a.liked = map[string]bool{}
+	}
+	for k := range a.liked {
+		if strings.HasPrefix(k, src+"/") {
+			delete(a.liked, k)
+		}
+	}
+	for _, id := range ids {
+		a.liked[src+"/"+strconv.FormatInt(id, 10)] = true
+	}
 }
 
 // loadLikedOf loads what the listener likes on another source, once its
@@ -83,14 +94,7 @@ func (a *app) loadLikedOf(src string, uid int64) {
 			// The source's songs are named by mid, and LikedIDs answers
 			// with numbers: a heart of a song not seen since is filled in
 			// when the song is drawn, from the numbers kept here.
-			for k := range a.liked {
-				if strings.HasPrefix(k, src+"/") {
-					delete(a.liked, k)
-				}
-			}
-			for _, id := range ids {
-				a.liked[src+"/"+strconv.FormatInt(id, 10)] = true
-			}
+			a.setLikedOf(src, ids)
 		})
 	}()
 }

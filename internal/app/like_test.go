@@ -14,6 +14,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"netease-music-mygo/internal/lyrics"
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -462,6 +463,29 @@ func TestSegmentedFrames(t *testing.T) {
 		f, _ := os.Create(filepath.Join(dir, name))
 		png.Encode(f, out)
 		f.Close()
+	}
+}
+
+// Signing in empties what is liked (signedIn sets it to nil) before the
+// lists come back, and each list's answer arrives after that: writing into
+// the map then was a crash on launch, every time the listener was signed in.
+func TestLikedListArrivesAfterSigningIn(t *testing.T) {
+	a := newTestApp()
+	a.profile = &netease.Profile{UserID: 1}
+	a.liked = nil
+	a.setLikedOf(music.SourceNetease, []int64{7, 8})
+	if !a.liked["netease/7"] || !a.liked["netease/8"] {
+		t.Fatalf("liked %v", a.liked)
+	}
+	// A second source's list is kept beside NetEase's, not over it.
+	a.setLikedOf(music.SourceQQ, []int64{7})
+	if !a.liked["netease/7"] || !a.liked["tx/7"] {
+		t.Fatalf("liked %v, want one source's songs kept beside the other's", a.liked)
+	}
+	// Asked again, a source's share is replaced rather than added to.
+	a.setLikedOf(music.SourceQQ, []int64{9})
+	if a.liked["tx/7"] || !a.liked["tx/9"] || !a.liked["netease/7"] {
+		t.Fatalf("liked %v", a.liked)
 	}
 }
 
