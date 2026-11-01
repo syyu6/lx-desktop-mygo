@@ -35,7 +35,7 @@ func TestLikeFromPlayerBar(t *testing.T) {
 	if err := tt.Click("喜欢"); err != nil {
 		t.Fatal(err)
 	}
-	if !a.liked[7] {
+	if !a.liked["netease/7"] {
 		t.Fatal("the heart did not fill at once")
 	}
 	if like := <-calls; !like {
@@ -45,7 +45,7 @@ func TestLikeFromPlayerBar(t *testing.T) {
 	if err := tt.Click("取消喜欢"); err != nil {
 		t.Fatal(err)
 	}
-	if a.liked[7] {
+	if a.liked["netease/7"] {
 		t.Error("still liked after unliking")
 	}
 	if like := <-calls; like {
@@ -473,19 +473,19 @@ func TestLikeCurrent(t *testing.T) {
 	a.pl.Cue([]netease.Track{{ID: 7, Name: "宝船"}})
 	a.profile = &netease.Profile{UserID: 1}
 	a.likeCurrent()
-	if !a.liked[7] || a.toast != "已添加到我喜欢的音乐" {
-		t.Fatalf("liked %v, toast %q", a.liked[7], a.toast)
+	if !a.liked["netease/7"] || a.toast != "已添加到我喜欢的音乐" {
+		t.Fatalf("liked %v, toast %q", a.liked["netease/7"], a.toast)
 	}
 	a.likeCurrent()
-	if a.liked[7] || a.toast != "已取消喜欢" {
-		t.Fatalf("unliked: liked %v, toast %q", a.liked[7], a.toast)
+	if a.liked["netease/7"] || a.toast != "已取消喜欢" {
+		t.Fatalf("unliked: liked %v, toast %q", a.liked["netease/7"], a.toast)
 	}
 	// An episode playing: the episode, not its audio.
 	likeProgram = func(int64, bool) error { return nil }
 	defer func() { likeProgram = netease.LikeProgram }()
 	a.pl.Cue([]netease.Track{{ID: 13, Name: "第一期", ProgramID: 3}})
 	a.likeCurrent()
-	if !a.likedPrograms[3] || a.liked[13] {
-		t.Fatalf("episode liked %v, its audio %v", a.likedPrograms[3], a.liked[13])
+	if !a.likedPrograms[3] || a.liked["netease/13"] {
+		t.Fatalf("episode liked %v, its audio %v", a.likedPrograms[3], a.liked["netease/13"])
 	}
 }

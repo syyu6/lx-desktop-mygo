@@ -9,6 +9,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -181,7 +182,7 @@ func TestRenamePlaylist(t *testing.T) {
 
 	a := editTestApp()
 	a.route = route{page: pageHome}
-	a.homeLoading = true
+	a.home(music.SourceNetease).at = time.Now()
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 	if err := tt.RightClick("睡前"); err != nil {
@@ -213,7 +214,7 @@ func TestRenamePlaylist(t *testing.T) {
 func TestNoRenamingLikedSongs(t *testing.T) {
 	a := editTestApp()
 	a.route = route{page: pageHome}
-	a.homeLoading = true
+	a.home(music.SourceNetease).at = time.Now()
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 	tt.RightClick("小明喜欢的音乐")
@@ -230,7 +231,7 @@ func TestDeletePlaylist(t *testing.T) {
 	defer func() { deletePlaylist = netease.DeletePlaylist }()
 
 	a := editTestApp()
-	a.homeLoading = true
+	a.home(music.SourceNetease).at = time.Now()
 	a.route = route{page: pageCharts}
 	a.open(route{page: pagePlaylist, id: 10})
 	tt := ui.NewTester(a.view, 1200, 800)
@@ -270,7 +271,7 @@ func TestCancelDeletingPlaylist(t *testing.T) {
 
 	a := editTestApp()
 	a.route = route{page: pageHome}
-	a.homeLoading = true
+	a.home(music.SourceNetease).at = time.Now()
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 	if err := tt.RightClick("睡前"); err != nil {

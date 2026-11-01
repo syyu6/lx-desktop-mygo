@@ -129,7 +129,12 @@ func (a *app) askedOn(id string, cap source.Cap) bool {
 // The thing is what the page is for — a square, charts, an artist's page
 // — and a source that does not have it is not offered: a page says so
 // itself rather than show an empty tab for it.
-func sourcesWith[T any](a *app, pick string) (ids []string, at int) {
+//
+// A page shows only the sources the listener left it (pageOn): a source
+// turned off for a page is not offered there, and when none is left the
+// page has nothing to show. A page with no row of its own (tabPage "") is
+// one source's always, and is not turned off anyone's.
+func sourcesWith[T any](a *app, page tabPage, pick string) (ids []string, at int) {
 	if a.reg == nil {
 		return nil, 0
 	}
@@ -141,6 +146,9 @@ func sourcesWith[T any](a *app, pick string) (ids []string, at int) {
 		if _, ok := any(p).(T); !ok {
 			continue
 		}
+		if !a.pageOn(page, id) {
+			continue
+		}
 		if pick == id {
 			at = len(ids)
 		}
@@ -149,13 +157,15 @@ func sourcesWith[T any](a *app, pick string) (ids []string, at int) {
 	return ids, at
 }
 
-// sourceTabs shows the sources a page can show, one lit, and reports the
+// sourceTabs draws the sources a page can show, one lit, and reports the
 // one chosen: the id of it, or empty while the pointer is elsewhere or
 // only one source has the page.
 //
 // It is drawn only when there are two: with one, the page says which in
-// its header's text, and a single tab is a control that does nothing.
-func (a *app) sourceTabs(c *ui.Context, key string, ids []string, at int) (string, bool) {
+// its header's text, and a single tab is a control that does nothing. It
+// draws nothing but the control — where it sits, and the room under it,
+// is the caller's.
+func (a *app) sourceTabs(c *ui.Context, key string, page tabPage, ids []string, at int) (string, bool) {
 	if len(ids) < 2 || a.reg == nil {
 		return "", false
 	}
@@ -168,16 +178,117 @@ func (a *app) sourceTabs(c *ui.Context, key string, ids []string, at int) (strin
 		}
 	}
 	chosen := ""
-	ui.Row(c).Margin(0, 0, 18, 0).Children(func() {
-		if segmented(c.Key(key), &at, labels...) {
-			chosen = ids[at]
-		}
-	})
+	if segmented(c.Key(key), &at, labels...) {
+		chosen = ids[at]
+	}
 	return chosen, chosen != ""
 }
 
-// sourceName is what the listener calls a source, for the pages to say
-// where a song or a playlist is from.
+// tabRow is the room a page's row of tabs keeps under it, in the pages that
+// show one under their heading and nothing beside it.
+func tabRow(c *ui.Context, tabs func()) {
+	ui.Row(c).Margin(0, 0, 18, 0).Children(tabs)
+}
+
+// tabPage is a page whose header offers the sources it can show: a page
+// the listener may browse across the services, or keep on one.
+type tabPage string
+
+const (
+	tabsHome      tabPage = "home"      // 推荐: the home page, and the daily songs under it
+	tabsCharts    tabPage = "charts"    // 排行榜
+	tabsSonglists tabPage = "songlists" // 歌单
+)
+
+// tabPages is every page the settings offer, in the order they are shown
+// there, with the name the settings give them.
+var tabPages = []struct {
+	page  tabPage
+	label string
+}{
+	{tabsHome, "推荐"},
+	{tabsCharts, "排行榜"},
+	{tabsSonglists, "歌单"},
+}
+
+// pageKey is how a source is turned off for a page in the settings: the
+// page and the source, since one switch is about one source in one place.
+func pageKey(page tabPage, id string) string {
+	return string(page) + "/" + id
+}
+
+// pageOn reports whether a page may show a source, and so whether the
+// source's own switch for that page is on. A page the settings have no row
+// for — the artist's, the album's, a playlist's — is every source's that
+// has it, as it always was: those are not places to browse the services.
+func (a *app) pageOn(page tabPage, id string) bool {
+	if page == "" || id == "" {
+		return true
+	}
+	return !slices.Contains(a.settings.PagesAskOff, pageKey(page, id))
+}
+
+// pageAlone reports whether a page has only one source left to show, so
+// that turning that one off would be turning the page off: a switch that
+// cannot move is not offered. A source turned off for the page is not one of
+// them, and a page no source has has none to be the last of.
+func (a *app) pageAlone(page tabPage, id string) bool {
+	if a.reg == nil || page == "" || !a.pageOn(page, id) {
+		return false
+	}
+	n := 0
+	for _, other := range a.reg.SearchedSources() {
+		if a.pageHas(page, other) && a.pageOn(page, other) {
+			n++
+		}
+	}
+	return n == 1 && a.pageHas(page, id)
+}
+
+// pageHas reports whether a source has the things a page is made of: a
+// home, charts, a square, a station. It is what sourcesWith asks of a
+// source, by the page rather than by a type parameter, for the settings,
+// which show a source's pages as a row of switches.
+func (a *app) pageHas(page tabPage, id string) bool {
+	if a.reg == nil {
+		return false
+	}
+	p, ok := a.reg.Get(id)
+	if !ok {
+		return false
+	}
+	switch page {
+	case tabsHome:
+		if _, ok := any(p).(source.FeaturedSource); ok {
+			return true
+		}
+		if _, ok := any(p).(source.Daily); ok {
+			return true
+		}
+		_, ok := any(p).(source.Radio)
+		return ok
+	case tabsCharts:
+		_, ok := any(p).(source.Charted)
+		return ok
+	case tabsSonglists:
+		_, ok := any(p).(source.Square)
+		return ok
+	}
+	return false
+}
+
+// setPageAsk turns a source on or off for a page, keeps it, and redraws.
+// Turning off the square's source leaves the square read from whichever
+// takes it, rather than showing what a source no longer drawn had loaded.
+func (a *app) setPageAsk(page tabPage, id string, on bool) {
+	a.settings.PagesAskOff = setOff(a.settings.PagesAskOff, pageKey(page, id), !on)
+	if !on && page == tabsSonglists {
+		a.square = nil
+	}
+	a.settings.save()
+	a.redraw()
+}
+
 func (a *app) sourceName(id string) string {
 	if id == "" || id == music.SourceNetease {
 		return ""

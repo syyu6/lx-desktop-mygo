@@ -212,7 +212,7 @@ func TestArtistAlbumsAndEvents(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	d := &artistData{profile: &netease.ArtistProfile{Artist: netease.Artist{ID: 12, Name: "乙"}, AccountID: 99}}
-	a.artists[12] = d
+	a.artists["netease/12"] = d
 	a.open(route{page: pageArtist, id: 12})
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
@@ -257,7 +257,7 @@ func TestFollowArtist(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.profile = &netease.Profile{UserID: 1}
-	a.artists[12] = &artistData{profile: &netease.ArtistProfile{Artist: netease.Artist{ID: 12, Name: "乙"}}}
+	a.artists["netease/12"] = &artistData{profile: &netease.ArtistProfile{Artist: netease.Artist{ID: 12, Name: "乙"}}}
 	a.open(route{page: pageArtist, id: 12})
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
@@ -265,11 +265,11 @@ func TestFollowArtist(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !a.artists[12].profile.Followed || !wait(t, asked, "the follow") {
+	if !a.artists["netease/12"].profile.Followed || !wait(t, asked, "the follow") {
 		t.Fatal("not followed")
 	}
 	tt.Click("已关注")
-	if len(asked) > 0 || !a.artists[12].profile.Followed {
+	if len(asked) > 0 || !a.artists["netease/12"].profile.Followed {
 		t.Error("unfollowed before the follow landed")
 	}
 }
@@ -420,7 +420,7 @@ func TestAlbumLinkInRow(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	song := netease.Track{ID: 2, Name: "起风了", Artists: []netease.Artist{{ID: 13, Name: "丙"}}, Album: netease.Album{ID: 8, Name: "迷跡波"}, Duration: 200000}
-	a.artists[13] = &artistData{profile: &netease.ArtistProfile{Artist: netease.Artist{ID: 13, Name: "丙"}, Songs: []netease.Track{song}}}
+	a.artists["netease/13"] = &artistData{profile: &netease.ArtistProfile{Artist: netease.Artist{ID: 13, Name: "丙"}, Songs: []netease.Track{song}}}
 	a.open(route{page: pageArtist, id: 13})
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
@@ -452,7 +452,7 @@ func catalogApp() *app {
 	for i, name := range []string{"迷跡波", "跡暖空", "壱雫空", "音一会", "迷星叫", "焚音打"} {
 		albums = append(albums, netease.AlbumProfile{Album: netease.Album{ID: int64(20 + i), Name: name}, Artists: []netease.Artist{band}, PublishTime: day})
 	}
-	a.artists[7] = &artistData{
+	a.artists["netease/7"] = &artistData{
 		profile: &netease.ArtistProfile{Artist: band, Alias: []string{"マイゴ"}, MusicSize: 38, AlbumSize: 9, BriefDesc: "迷いながらでも、前へ。", AccountID: 70, Songs: songs},
 		albums:  albums, albumsPage: paged{loaded: true},
 		events: []netease.Event{
@@ -461,9 +461,9 @@ func catalogApp() *app {
 		},
 		eventsPage: paged{loaded: true},
 	}
-	a.albums[8] = &albumData{album: &netease.AlbumProfile{Album: al, Artists: []netease.Artist{band}, PublishTime: day, Description: "MyGO!!!!! 的第一张专辑。", Songs: songs}}
+	a.albums["netease/8"] = &albumData{album: &netease.AlbumProfile{Album: al, Artists: []netease.Artist{band}, PublishTime: day, Description: "MyGO!!!!! 的第一张专辑。", Songs: songs}}
 	user := netease.User{UserID: 9, Nickname: "听歌的人", Signature: "在音乐里，寻找同路的人。", Follows: 12, Followeds: 24}
-	a.users[9] = &userData{user: &user, playlists: []netease.Playlist{{ID: 30, Name: "通勤路上", TrackCount: 40}, {ID: 31, Name: "睡前", TrackCount: 12}}}
+	a.users["netease/9"] = &userData{user: &user, playlists: []netease.Playlist{{ID: 30, Name: "通勤路上", TrackCount: 40}, {ID: 31, Name: "睡前", TrackCount: 12}}}
 	pod := &netease.Podcast{ID: 5, Name: "夜航电台", Category: "情感", DJ: user, ProgramCount: 120, SubCount: 34000, Description: "每晚陪你说说话。"}
 	var programs []netease.Program
 	for i := range 4 {
@@ -484,7 +484,7 @@ func catalogApp() *app {
 		res  netease.SearchResult
 	}{
 		{netease.SearchSongs, netease.SearchResult{Songs: songs, Total: 38}},
-		{netease.SearchArtists, netease.SearchResult{Artists: []netease.ArtistProfile{*a.artists[7].profile, {Artist: netease.Artist{ID: 10, Name: "Ave Mujica"}}}, Total: 2}},
+		{netease.SearchArtists, netease.SearchResult{Artists: []netease.ArtistProfile{*a.artists["netease/7"].profile, {Artist: netease.Artist{ID: 10, Name: "Ave Mujica"}}}, Total: 2}},
 		{netease.SearchAlbums, netease.SearchResult{Albums: albums, Total: 6}},
 		{netease.SearchUsers, netease.SearchResult{Users: []netease.User{user, {UserID: 10, Nickname: "夏日来信"}}, Total: 2}},
 		{netease.SearchPodcasts, netease.SearchResult{Podcasts: []netease.Podcast{*pod}, Total: 1}},

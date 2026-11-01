@@ -11,12 +11,31 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo/audio"
 	gomp3 "github.com/hajimehoshi/go-mp3"
 
 	"netease-music-mygo/internal/netease"
+	"netease-music-mygo/internal/network"
 )
+
+// songHTTP is what a song's bytes come through: the app's transport, so
+// that a listener behind a proxy hears the songs as they hear the rest, and
+// no timeout, since a song is minutes long on a slow connection and its
+// download ends when the stream it feeds does.
+var songHTTP = network.Client(0)
+
+// firstByte is how long a song's address has to start answering. A client
+// with no timeout at all is right for a whole song, but a source that takes
+// the request and then sends nothing never ends its download and never
+// errors either: the stream waits for bytes that do not come, and the player
+// says 「正在缓冲」 for as long as the listener leaves it, instead of giving
+// the song's next link its turn.
+var firstByte = 20 * time.Second
+
+// errCold is what a download that never started answering ends with.
+var errCold = errors.New("音源没有响应")
 
 // A download fetches a song as it plays: readers wait for the bytes they
 // need, so playback starts with the first ones. The song comes into a file
@@ -85,19 +104,40 @@ func opened(f *os.File, size int64) *download {
 
 func (d *download) run(ctx context.Context, url string) {
 	defer d.release()
+	// The first being written wins: a download that ends twice, once by the
+	// watchdog and once by the read it interrupted, keeps the first word.
 	finish := func(err error) {
 		d.mu.Lock()
-		d.done, d.err = true, err
+		if !d.done {
+			d.done, d.err = true, err
+		}
 		d.cond.Broadcast()
 		d.mu.Unlock()
 	}
+	// The watchdog covers the request as well as its answer: a source that
+	// accepts the connection and then says nothing never reaches Read, and
+	// Do's error would never be the listener's word for it.
+	timer := time.AfterFunc(firstByte, func() {
+		d.mu.Lock()
+		cold := !d.done && d.n == 0
+		if cold {
+			d.done, d.err = true, errCold
+			d.cond.Broadcast()
+		}
+		d.mu.Unlock()
+		if cold {
+			// Ends the request and the read it is in, if it is in one.
+			d.cancel()
+		}
+	})
+	defer timer.Stop()
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		finish(err)
 		return
 	}
 	req.Header.Set("User-Agent", netease.UserAgent)
-	res, err := http.DefaultClient.Do(req)
+	res, err := songHTTP.Do(req)
 	if err != nil {
 		finish(err)
 		return
@@ -108,9 +148,16 @@ func (d *download) run(ctx context.Context, url string) {
 		return
 	}
 	buf := make([]byte, 64<<10)
+	warm := false
 	for {
 		n, err := res.Body.Read(buf)
 		if n > 0 {
+			if !warm {
+				// Answering: what the watchdog was for is done with, and
+				// the song may take as long as it likes.
+				warm = true
+				timer.Stop()
+			}
 			d.write(buf[:n])
 		}
 		if err == io.EOF {

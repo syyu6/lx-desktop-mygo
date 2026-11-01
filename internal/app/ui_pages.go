@@ -34,9 +34,15 @@ func (a *app) section(c *ui.Context, title string) ui.Element {
 }
 
 func (a *app) homePage(c *ui.Context) {
-	loading := len(a.featured) == 0 && len(a.charts) == 0
-	if loading && !a.homeLoading {
-		a.centered(c, a.homeErr, a.loadHome)
+	h, _, loading := a.homeView()
+	if h == nil {
+		a.scrollPage(c, func() {
+			a.empty(c, "没有可浏览首页的音源，请在设置中开启一个内置源")
+		})
+		return
+	}
+	if loading && h.err != "" {
+		a.centered(c, h.err, a.loadHome)
 		return
 	}
 	now := c.Now()
@@ -49,36 +55,62 @@ func (a *app) homePage(c *ui.Context) {
 			hello += "，" + a.profile.Nickname
 		}
 		a.heading(c, hello, fmt.Sprintf("%d月%d日 %s", now.Month(), now.Day(), weekday(now)))
+		a.homeSourceTabs(c)
 		if loading {
 			a.homeSkeleton(c, a.pageShimmer(c))
 			return
 		}
-		a.dailyCard(c, now)
+		if len(h.daily) > 0 {
+			a.dailyCard(c, now, h.daily)
+		} else if h.errDaily != "" {
+			a.dailyTear(c, now, h.errDaily)
+		}
 
-		if len(a.recPlaylists) > 0 {
+		if len(h.rec) > 0 {
 			a.section(c, "今日为你推荐")
 			ui.Grid(c).Columns(a.columns(c, 168)).GapX(20).GapY(28).Children(func() {
-				for i := range a.recPlaylists[:min(len(a.recPlaylists), a.columns(c, 168)*2)] {
-					a.playlistCard(c.Key(a.recPlaylists[i].ID), &a.recPlaylists[i])
+				for i := range h.rec[:min(len(h.rec), a.columns(c, 168)*2)] {
+					a.playlistCard(c.Key(playlistKey(h.rec[i].Src(), h.rec[i].ID)), &h.rec[i])
 				}
 			})
 		}
 
-		a.section(c, "官方榜单")
-		official := a.charts[:min(4, len(a.charts))]
-		cols := min(4, max(2, a.columns(c, 260)))
-		ui.Grid(c).Columns(cols).Gap(20).Children(func() {
-			for i := range official {
-				a.chartCard(c.Key(official[i].ID), &official[i])
-			}
-		})
+		if len(h.charts) > 0 {
+			a.section(c, "官方榜单")
+			official := h.charts[:min(4, len(h.charts))]
+			cols := min(4, max(2, a.columns(c, 260)))
+			ui.Grid(c).Columns(cols).Gap(20).Children(func() {
+				for i := range official {
+					a.chartCard(c.Key(official[i].ID), &official[i])
+				}
+			})
+		}
 
-		a.section(c, "推荐歌单")
-		ui.Grid(c).Columns(a.columns(c, 168)).GapX(20).GapY(28).Children(func() {
-			for i := range a.featured {
-				a.playlistCard(c.Key(a.featured[i].ID), &a.featured[i])
-			}
+		if len(h.featured) > 0 {
+			a.section(c, "推荐歌单")
+			ui.Grid(c).Columns(a.columns(c, 168)).GapX(20).GapY(28).Children(func() {
+				for i := range h.featured {
+					a.playlistCard(c.Key(playlistKey(h.featured[i].Src(), h.featured[i].ID)), &h.featured[i])
+				}
+			})
+		}
+	})
+}
+
+// dailyTear is what the home page shows in the daily card's place when the
+// source has not given the day's songs: a source that wants an account
+// says so, with the way to sign in.
+func (a *app) dailyTear(c *ui.Context, now time.Time, msg string) {
+	p := a.pal
+	ui.Row(c).Height(112).Radius(18).Padding(0, 26).Margin(0, 0, 12, 0).Background(p.hover.Over(p.bg)).
+		AlignItems(ui.Center).Gap(18).Children(func() {
+		ui.Column(c).Grow(1).Gap(4).Children(func() {
+			ui.Text(c, "每日推荐").FontSize(12).FontWeight(600).TextColor(p.accent)
+			ui.Text(c, msg).FontSize(15).TextColor(p.text)
 		})
+		if pillButton(c.Key("daily-login"), iconUser, "登录", p.hover.Over(p.bg), p.text).Clicked() {
+			a.openLogin()
+		}
 	})
 }
 
@@ -87,9 +119,15 @@ func weekday(t time.Time) string {
 }
 
 func (a *app) chartsPage(c *ui.Context) {
-	loading := len(a.charts) == 0
-	if loading && !a.homeLoading {
-		a.centered(c, a.homeErr, a.loadHome)
+	h, _, loading := a.homeView()
+	if h == nil {
+		a.scrollPage(c, func() {
+			a.empty(c, "没有可浏览榜单的音源，请在设置中开启一个内置源")
+		})
+		return
+	}
+	if loading && h.err != "" {
+		a.centered(c, h.err, a.loadHome)
 		return
 	}
 	top, bottom := a.insets(c)
@@ -97,6 +135,7 @@ func (a *app) chartsPage(c *ui.Context) {
 		a.startMark(c)
 		defer a.endMark(c)
 		a.heading(c, "排行榜", "每日更新")
+		a.homeSourceTabs(c)
 		if loading {
 			s := a.pageShimmer(c)
 			a.chartCardsSkeleton(c, s)
@@ -104,19 +143,19 @@ func (a *app) chartsPage(c *ui.Context) {
 			a.playlistCardsSkeleton(c, s, a.columns(c, 150)*2, 150, true)
 			return
 		}
-		official := a.charts[:min(4, len(a.charts))]
+		official := h.charts[:min(4, len(h.charts))]
 		cols := min(4, max(2, a.columns(c, 260)))
 		ui.Grid(c).Columns(cols).Gap(20).Children(func() {
 			for i := range official {
 				a.chartCard(c.Key(official[i].ID), &official[i])
 			}
 		})
-		if len(a.charts) > 4 {
+		if len(h.charts) > 4 {
 			a.section(c, "全部榜单")
-			rest := a.charts[4:]
+			rest := h.charts[4:]
 			ui.Grid(c).Columns(a.columns(c, 150)).GapX(20).GapY(28).Children(func() {
 				for i := range rest {
-					a.playlistCard(c.Key(rest[i].ID), &rest[i])
+					a.playlistCard(c.Key(playlistKey(rest[i].Src(), rest[i].ID)), &rest[i])
 				}
 			})
 		}
@@ -257,7 +296,49 @@ func (a *app) playlistPage(c *ui.Context) {
 		a.trackSkeleton(c, s, true, func(c *ui.Context) { a.playlistHeaderSkeleton(c, s) })
 		return
 	}
+	// The songs the listener likes are a source's own list, and a source
+	// that keeps albums too shows them beside them: its two tabs are the
+	// liked songs and the albums collected.
+	if pl.SpecialType == 5 {
+		if _, ok := a.collectedOf(pl.Src()); ok {
+			header := func(c *ui.Context) {
+				a.playlistHeader(c, pl)
+				a.playlistTabs(c, pl)
+			}
+			if a.route.tab == likedAlbums {
+				a.collectedPage(c, pl.Src(), header)
+				return
+			}
+			a.trackRows(c, pl.Tracks, true, header)
+			return
+		}
+	}
 	a.trackRows(c, pl.Tracks, true, func(c *ui.Context) { a.playlistHeader(c, pl) })
+}
+
+// Which of a liked playlist's page's two tabs it shows.
+const (
+	likedSongs = iota
+	likedAlbums
+)
+
+// playlistTabs switches a playlist's page between its songs and, where its
+// source keeps them, its albums. It is drawn under the header, where the
+// page's own tabs sit.
+func (a *app) playlistTabs(c *ui.Context, pl *netease.Playlist) {
+	tab := likedSongs
+	if a.route.tab == likedAlbums {
+		tab = likedAlbums
+	}
+	ui.Row(c).AlignItems(ui.Center).Gap(12).Margin(0, 0, 18, 0).Children(func() {
+		if segmented(c.Key("liked-kind"), &tab, "单曲", "专辑") {
+			r := a.route
+			r.tab = tab
+			a.show(r)
+			return
+		}
+		ui.Box(c).Grow(1)
+	})
 }
 
 func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
@@ -286,7 +367,7 @@ func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
 			}
 			ui.Text(c, strings.Join(meta, " · ")).FontSize(13).TextColor(p.muted)
 			if d := strings.TrimSpace(pl.Description); d != "" {
-				ui.Text(c, strings.ReplaceAll(d, "\n", " ")).FontSize(12.5).TextColor(p.muted).MaxLines(2).LineHeight(1.45).Margin(2, 0, 0, 0)
+				a.collectionDescription(c, d)
 			}
 			ui.Row(c).Gap(10).Margin(10, 0, 0, 0).Children(func() {
 				if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
@@ -450,7 +531,7 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 					case tr.Album.ID == 0 || tr.Album.Name == "":
 						ui.Text(c, tr.Album.Name)
 					case tr.Src() == music.SourceNetease:
-						a.link(c.Key("album"), tr.Album.Name, p.muted, p.text, route{page: pageAlbum, id: tr.Album.ID})
+						a.link(c.Key("album"), tr.Album.Name, p.muted, p.text, route{page: pageAlbum, src: pageSrc(albumSrc(tr)), id: tr.Album.ID})
 					default:
 						// Another source's albums have no page: their names
 						// open what that source has of them instead.
@@ -460,7 +541,7 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 			}
 			// A liked song's heart shows; the others' as the pointer is on them.
 			ui.Box(c).Size(32, 32).Center().Children(func() {
-				if a.liked[tr.ID] || hovered {
+				if a.isLiked(tr) || hovered {
 					a.likeButton(c.Key("like"), tr, 15, p.muted)
 				}
 			})

@@ -10,7 +10,7 @@ import (
 func newTestApp() *app {
 	a := &app{
 		playlists: map[string]*netease.Playlist{}, loadingPl: map[string]bool{}, plErr: map[string]string{},
-		artists: map[int64]*artistData{}, albums: map[int64]*albumData{}, users: map[int64]*userData{},
+		artists: map[string]*artistData{}, albums: map[string]*albumData{}, users: map[string]*userData{},
 		podcasts: map[int64]*podcastData{}, podcastTab: &podcastTab{}, searches: map[route]*searchData{},
 		lyricAt: -1, queueAt: -1,
 		focused: true, shown: true, // the active app, its window showing: what it draws moves on its own

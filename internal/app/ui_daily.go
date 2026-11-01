@@ -18,11 +18,12 @@ import (
 // own.
 func (a *app) dailyArt(c *ui.Context, now time.Time, size float32) {
 	var art *artwork
+	songs := a.dailySongs()
 	switch {
 	case a.pal.immersive:
 		art = a.coverArt
-	case len(a.daily) > 0:
-		art = a.art.get(netease.Sized(a.daily[0].Album.PicURL, 600), true)
+	case len(songs) > 0:
+		art = a.art.get(netease.Sized(songs[0].Album.PicURL, 600), true)
 	}
 	radius := size * 0.07
 	box := ui.Box(c).Size(size, size).Radius(radius).Background(ui.Hex("#3a3a40")).
@@ -48,8 +49,7 @@ func (a *app) dailyArt(c *ui.Context, now time.Time, size float32) {
 // on wide pages the first picks are listed between. Under the pointer the
 // covers fan and the record slides out, turning; while the day's songs
 // play it turns on, and grooves ripple out from it across the card.
-func (a *app) dailyCard(c *ui.Context, now time.Time) {
-	songs := a.daily
+func (a *app) dailyCard(c *ui.Context, now time.Time, songs []netease.Track) {
 	if len(songs) == 0 {
 		return
 	}
@@ -58,7 +58,7 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 	art := a.art.get(netease.Sized(songs[0].Album.PicURL, 600), true)
 	card := ui.ButtonBase(c.Key("daily")).Height(dailyHeight).Radius(dailyRadius).FocusRing(false).Label("每日推荐").TextColor(white)
 	hovered := card.Hovered()
-	ours, playing := a.dailyPlaying()
+	ours, playing := a.dailyPlaying(songs)
 
 	// The cover's colors, eased in as it loads — or, following the player,
 	// the window's own, which the palette is already blending from one song
@@ -166,9 +166,9 @@ func recordOut(out float32) float32 { return 30 + 46*out }
 
 // dailyPlaying reports whether the day's songs are what plays, and whether
 // they play now rather than paused.
-func (a *app) dailyPlaying() (ours, playing bool) {
+func (a *app) dailyPlaying(songs []netease.Track) (ours, playing bool) {
 	q, cur := a.pl.Queue(), a.pl.Current()
-	if cur == nil || len(q) != len(a.daily) || len(q) == 0 || q[0].ID != a.daily[0].ID || q[len(q)-1].ID != a.daily[len(q)-1].ID {
+	if cur == nil || len(q) != len(songs) || len(q) == 0 || q[0].Ident() != songs[0].Ident() || q[len(q)-1].Ident() != songs[len(songs)-1].Ident() {
 		return false, false
 	}
 	return true, a.pl.Playing()
@@ -480,24 +480,33 @@ func (a *app) dailyNote() string {
 }
 
 // dailyBlurb says whose taste the day's songs follow.
-func (a *app) dailyBlurb() string {
-	if a.profile == nil {
-		return "大家都在听的好歌，登录后为你专属生成"
+func (a *app) dailyBlurb(src string) string {
+	if !a.signedInTo(src) {
+		if name := a.sourceShortName(src); name != "" {
+			return "大家都在听的好歌，登录" + name + "后为你专属生成"
+		}
 	}
 	return "根据你的音乐口味生成，每天 6:00 更新"
 }
 
 func (a *app) dailyPage(c *ui.Context) {
-	loading := len(a.daily) == 0
-	if loading && !a.homeLoading {
-		a.centered(c, "暂时没有推荐", a.loadHome)
+	h, src, loading := a.homeView()
+	if h == nil {
+		a.scrollPage(c, func() {
+			a.empty(c, "没有每日推荐的音源，请在设置中开启一个内置源")
+		})
+		return
+	}
+	if loading && h.err != "" {
+		a.centered(c, h.err, a.loadHome)
 		return
 	}
 	now := c.Now()
-	songs := a.daily
+	songs := h.daily
 	s := a.pageShimmer(c)
 	header := func(c *ui.Context) {
 		p := a.pal
+		a.homeSourceTabs(c)
 		ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 0, 26, 0).Children(func() {
 			a.dailyArt(c, now, 212)
 			ui.Column(c).Gap(8).Children(func() {
@@ -511,7 +520,16 @@ func (a *app) dailyPage(c *ui.Context) {
 					})
 					return
 				}
-				ui.Text(c, fmt.Sprintf("%d 首 · %s", len(songs), a.dailyBlurb())).FontSize(13).TextColor(p.muted)
+				if len(songs) == 0 {
+					ui.Text(c, h.errDaily).FontSize(13).TextColor(p.muted)
+					ui.Row(c).Gap(10).Margin(8, 0, 0, 0).Children(func() {
+						if pillButton(c.Key("login"), iconUser, "登录", p.accent, p.onAccent).Clicked() {
+							a.openLogin()
+						}
+					})
+					return
+				}
+				ui.Text(c, fmt.Sprintf("%d 首 · %s", len(songs), a.dailyBlurb(src))).FontSize(13).TextColor(p.muted)
 				ui.Row(c).Gap(10).Margin(8, 0, 0, 0).Children(func() {
 					if pillButton(c.Key("play"), iconPlay, "播放全部", p.accent, p.onAccent).Clicked() {
 						if a.pl.Shuffle() {
@@ -536,5 +554,20 @@ func (a *app) dailyPage(c *ui.Context) {
 		a.trackSkeleton(c, s, true, header)
 		return
 	}
+	if len(songs) == 0 {
+		a.scrollPage(c, func() {
+			header(c)
+			a.empty(c, "今天还没有推荐")
+		})
+		return
+	}
 	a.trackRows(c, songs, true, header)
+}
+
+// dailySongs is the day's songs of the source the daily page shows.
+func (a *app) dailySongs() []netease.Track {
+	if src := a.homeSource(); src != "" {
+		return a.home(src).daily
+	}
+	return nil
 }

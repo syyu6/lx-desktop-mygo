@@ -11,8 +11,10 @@
 - 入口：`main.go` → `internal/app.Run()`
 - UI：全部包在 `internal/app`，按页面拆成 `ui_*.go`
 - 播放：`internal/player`（解码、缓存、重采样、增益）
-- 来源：`internal/source`（内置源 + 音源脚本的解析链）、`internal/netease`、`internal/kuwo` 等
-- `ref/lx-music-desktop` 是参考实现，只读，不要改
+- 来源：`internal/source`（内置源 + 音源脚本的解析链）、`internal/netease`、`internal/qq`、`internal/kuwo` 等
+- 账号：`internal/account`（每个来源一个账号，可同时在线；QQ 与微信扫码在 `internal/qq/auth*.go`）
+- 网络：`internal/network` 统一给出所有 HTTP 客户端，走系统代理
+- `ref/lx-music-desktop`、`ref/mygo-qyin` 是参考实现，只读，不要改
 
 ## 开发与验证
 
@@ -40,6 +42,8 @@ scripts/reset.sh                    # 清掉设置/登录/会话，像首次打�
   只放自造的 fixture；真实脚本只存在于用户的 Application Support 下做本地验证。
 - **密钥不进仓库。** 更新私钥在 `~/Library/Application Support/mygo/update-keys/`，
   `mygo.json` 里只放公钥。
+- **借用别人的协议实现要留痕。** `internal/qq` 照 `qq-music-api`（MIT）写的，
+  `THIRD_PARTY_NOTICES.md` 里保留它的版权与许可；再借别的，同样补一条。
 - 改了行为就更新 `CHANGELOG.md` 的「未发布」；面向用户的能力变化同步改 `README.md`。
 
 ## 测试

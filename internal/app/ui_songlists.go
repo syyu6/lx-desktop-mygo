@@ -1,6 +1,8 @@
 package app
 
 import (
+	"strconv"
+
 	"github.com/egoist/mygo/ui"
 
 	"netease-music-mygo/internal/music"
@@ -36,7 +38,7 @@ const squareLimit = 36
 // listener chose, while they still ask it, and else the first one that has
 // a square.
 func (a *app) squareSource() string {
-	ids, at := sourcesWith[source.Square](a, a.squarePick)
+	ids, at := sourcesWith[source.Square](a, tabsSonglists, a.squarePick)
 	if len(ids) == 0 {
 		return ""
 	}
@@ -99,6 +101,11 @@ func (a *app) tagsArrived(s *squareState, sq source.Square, tags []music.Tag, er
 
 // squareArrived takes a page of the square's playlists: more appends it to
 // those shown.
+//
+// A page is one source's, and a source that pages its square by a rank that
+// moves, or that counts its window in, can list a playlist again on the next
+// page: the repeat is dropped rather than drawn twice, since two cards of one
+// key share one state, and the pointer over one moves both.
 func (a *app) squareArrived(s *squareState, lists []music.Playlist, err error, more bool) {
 	s.page.loading = false
 	if err != nil {
@@ -106,7 +113,18 @@ func (a *app) squareArrived(s *squareState, lists []music.Playlist, err error, m
 		return
 	}
 	if more {
-		s.lists = append(s.lists, lists...)
+		seen := make(map[string]bool, len(s.lists))
+		for i := range s.lists {
+			seen[playlistKey(s.lists[i].Src(), s.lists[i].ID)] = true
+		}
+		for i := range lists {
+			key := playlistKey(lists[i].Src(), lists[i].ID)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			s.lists = append(s.lists, lists[i])
+		}
 	} else {
 		s.lists = lists
 		s.page.loaded = true
@@ -249,8 +267,12 @@ func (a *app) songlistsHeader(c *ui.Context) {
 // squareSources switches the square between the sources that have one, as
 // the source the page shows.
 func (a *app) squareSources(c *ui.Context) {
-	ids, at := sourcesWith[source.Square](a, a.squareSource())
-	if chosen, ok := a.sourceTabs(c, "square-src", ids, at); ok {
+	ids, at := sourcesWith[source.Square](a, tabsSonglists, a.squareSource())
+	var chosen string
+	tabRow(c, func() {
+		chosen, _ = a.sourceTabs(c, "square-src", tabsSonglists, ids, at)
+	})
+	if chosen != "" {
 		// Chosen, it stays the page's, until it is turned off or taken
 		// away.
 		a.squarePick = chosen
@@ -267,9 +289,12 @@ func (a *app) squareTags(c *ui.Context, s *squareState) {
 		for i := range chips {
 			tag := i - 1
 			chosen := s.tag == tag
-			// Each chip a key of its own: a page built twice, as it is redrawn,
-			// must find the same ones.
-			b := ui.ButtonBase(c.Key("tag-" + chips[i].Name)).Height(28).PaddingX(12).Radius(14).FocusRing(false).Label(chips[i].Name)
+			// Each chip a key of its own, by its place in the row: sources
+			// name their categories apart but not always number them — two of
+			// NetEase's old tags carry no id — while two chips of one key share
+			// one state. A name is not a key either: QQ calls a category 全部,
+			// as the page calls its own.
+			b := ui.ButtonBase(c.Key("tag-chip-" + strconv.Itoa(i))).Height(28).PaddingX(12).Radius(14).FocusRing(false).Label(chips[i].Name)
 			color := p.muted
 			switch {
 			case chosen:

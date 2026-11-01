@@ -59,6 +59,14 @@ type Searcher interface {
 	SearchPlaylists(query string, limit, offset int) ([]music.Playlist, int, error)
 }
 
+// PeopleSearcher is a source whose catalogue finds artists and albums: not
+// every one has a page for them to open, and the ones that do are hoped for
+// rather than required.
+type PeopleSearcher interface {
+	SearchArtists(query string, limit, offset int) ([]music.ArtistProfile, int, error)
+	SearchAlbums(query string, limit, offset int) ([]music.AlbumProfile, int, error)
+}
+
 // Coverer is a provider that finds a song's cover apart from its album's.
 type Coverer interface {
 	Pic(t music.Track) (string, error)
@@ -171,11 +179,30 @@ type Extras interface {
 	Membership() (music.Membership, error)
 }
 
+// Collection is a source whose account keeps albums as well as songs: the
+// albums the listener collected, shown beside the songs they like.
+//
+// It is apart from Library, which is the songs alone: NetEase has no such
+// collection that an app outside its own may read, and its 我喜欢 page has
+// no albums tab rather than an empty one.
+type Collection interface {
+	CollectedAlbums(limit, offset int) ([]music.AlbumProfile, bool, error)
+	// AlbumCollected reports whether the listener collected an album.
+	AlbumCollected(id int64) (bool, error)
+	// CollectAlbum collects an album, or takes it out of the collection.
+	CollectAlbum(id int64, on bool) error
+}
+
 var (
 	// ErrNoSource is returned when no enabled source is asked.
 	ErrNoSource = errors.New("source: no source is enabled")
 	// ErrUnknownSource is returned for an id no provider answers to.
 	ErrUnknownSource = errors.New("source: no such source")
+	// ErrNoAccount is what a source returns for something only a signed-in
+	// listener is given: its daily songs, the lists they made, what they
+	// like. The pages tell it apart from a source that is not answering,
+	// and say which one the listener should sign in to.
+	ErrNoAccount = errors.New("source: this needs the account")
 )
 
 // Cap is something a source does, which the listener may want it for and

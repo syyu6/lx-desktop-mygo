@@ -11,10 +11,12 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/account"
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
-// The account is in the settings, beside the sources it plays from, and the
+// The account is in the settings, under the source it is for, and the
 // sidebar's foot has the way in as well, by the listener's picture alone.
 func TestSignInIsInTheSettings(t *testing.T) {
 	a := newTestApp()
@@ -26,8 +28,13 @@ func TestSignInIsInTheSettings(t *testing.T) {
 	if _, ok := tt.Find("扫码登录"); !ok {
 		t.Fatal("the settings have no way to sign in")
 	}
-	if _, ok := tt.Find("网易云音乐账号"); !ok {
-		t.Error("the account's group is not in the settings")
+	// The account is its source's row: the sources it is signed in from are
+	// the ones named there, and no group of the account's own is left.
+	if !tt.HasText("未登录 · 登录后可按会员身份播放会员歌曲，每日推荐与歌单也依你的口味生成") {
+		t.Error("the NetEase row does not say who is signed in to it")
+	}
+	if _, ok := tt.Find("网易云音乐账号"); ok {
+		t.Error("the account still has a group of its own")
 	}
 	// And the sidebar's foot signs in too, from a picture rather than a
 	// row that names the service.
@@ -75,7 +82,7 @@ func ownPageApp() *app {
 	a.settings = defaultSettings()
 	a.profile = &netease.Profile{UserID: 9, Nickname: "听歌的人"}
 	user := netease.User{UserID: 9, Nickname: "听歌的人", Signature: "在音乐里，寻找同路的人。", Follows: 12, Followeds: 24}
-	a.users[9] = &userData{
+	a.users["netease/9"] = &userData{
 		user:      &user,
 		playlists: []netease.Playlist{{ID: 30, Name: "通勤路上", TrackCount: 40}},
 		artists:   []netease.ArtistProfile{{Artist: netease.Artist{ID: 7, Name: "MyGO!!!!!"}}, {Artist: netease.Artist{ID: 10, Name: "Ave Mujica"}}},
@@ -104,7 +111,7 @@ func TestOwnPageFollows(t *testing.T) {
 	if a.route.page != pageArtist || a.route.id != 10 {
 		t.Fatalf("route = %+v, want the page of artist 10", a.route)
 	}
-	a.users[9].subsLoading = 0 // what was asked for has landed
+	a.users["netease/9"].subsLoading = 0 // what was asked for has landed
 	a.back()
 	wait(t, asked, "the artists followed, again")
 }
@@ -125,6 +132,37 @@ func TestOthersPageHidesFollows(t *testing.T) {
 		t.Fatal("the listener's artists showed on someone else's page")
 	}
 }
+
+// Another source's own page is that source's: it shows the listener's
+// public playlists there, and none of what is NetEase's alone — the artists
+// followed and the podcasts subscribed to have no page in QQ Music.
+func TestAnotherSourcesOwnPageIsItsOwn(t *testing.T) {
+	asked := fakeSubscriptions(t)
+	a := newTestApp()
+	a.loadRegistry()
+	a.accounts = map[string]*account.Profile{
+		music.SourceQQ: {Source: music.SourceQQ, UserID: 9, Nickname: "听歌的人"},
+	}
+	a.users["tx/9"] = &userData{
+		user:      &nceUser,
+		playlists: []netease.Playlist{{ID: 30, Name: "通勤路上", TrackCount: 40}},
+	}
+	a.open(route{page: pageUser, src: music.SourceQQ, id: 9})
+	tt := ui.NewTester(a.view, 1200, 1200)
+	tt.Frame()
+	if len(asked) > 0 {
+		t.Fatal("asked NetEase for what the listener follows on QQ's page")
+	}
+	if !tt.HasText("创建的歌单") {
+		t.Error("QQ's own page has no playlists")
+	}
+	if tt.HasText("关注的歌手") || tt.HasText("订阅的播客") {
+		t.Error("QQ's page shows what only NetEase has")
+	}
+}
+
+// nceUser is the user another source's page shows.
+var nceUser = netease.User{UserID: 9, Nickname: "听歌的人"}
 
 // The listener's own page asks for no frames once shown.
 func TestOwnPageFrameBudget(t *testing.T) {

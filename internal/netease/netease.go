@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"netease-music-mygo/internal/music"
+	"netease-music-mygo/internal/network"
 )
 
 // The public NetEase Cloud Music API, as the web player calls it, without
@@ -22,7 +23,7 @@ const apiBase = "https://music.163.com"
 
 const UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
-var httpClient = &http.Client{Timeout: 20 * time.Second}
+var httpClient = network.Client(20 * time.Second)
 
 // The types are package music's, which the app reads across its sources:
 // these names keep the NetEase code reading as the NetEase API does, and
@@ -30,11 +31,11 @@ var httpClient = &http.Client{Timeout: 20 * time.Second}
 // The profiles and remarks are shared with every source that has them,
 // which is what lets a page show QQ's artist beside NetEase's.
 type (
-	Artist       = music.Artist
-	Album        = music.Album
-	Track        = music.Track
-	Privilege    = music.Privilege
-	ChartLine    = music.ChartLine
+	Artist        = music.Artist
+	Album         = music.Album
+	Track         = music.Track
+	Privilege     = music.Privilege
+	ChartLine     = music.ChartLine
 	ArtistProfile = music.ArtistProfile
 	AlbumProfile  = music.AlbumProfile
 	User          = music.User

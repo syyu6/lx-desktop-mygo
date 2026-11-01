@@ -9,49 +9,90 @@ import (
 
 	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
+	"netease-music-mygo/internal/source"
 )
 
 // artistLinks shows a track's artists as its credits read, each a link to
 // their page in color, brightening to hover under the pointer, and then,
-// with album, a link to its album. An artist NetEase has no page for,
-// credited by name alone or by another source, is plain text. An episode's host and podcast,
-// in its artists' and album's place, link to the podcast's page.
+// with album, a link to its album. An artist a source has no page for,
+// credited by name alone, is plain text. An episode's host and podcast, in
+// its artists' and album's place, link to the podcast's page.
 func (a *app) artistLinks(c *ui.Context, tr *netease.Track, color, hover ui.Color, album ...bool) ui.Element {
 	podcast := route{page: pagePodcast, id: tr.PodcastID}
-	// Artists' and albums' pages are NetEase's: the other services have
-	// none, as lx-music-desktop's do not either, so their names open a
-	// search of them on their own source, which is the page they have.
-	netease := tr.Src() == music.SourceNetease
+	// A source that has artist pages opens theirs; one that has none, as
+	// Kuwo does, opens a search of the name on it, which is the page it
+	// has. The artist itself says which source it is of, since a song may
+	// be found on one source and credited by another.
 	return ui.RichText(c).TextColor(color).Children(func() {
 		for i, ar := range tr.Artists {
 			if i > 0 {
 				ui.Text(c, ", ")
 			}
+			src := ar.Source
+			if src == "" {
+				src = tr.Src()
+			}
 			switch {
 			case tr.PodcastID != 0:
 				a.link(c.Key(i), ar.Name, color, hover, podcast)
-			case ar.ID != 0 && netease:
-				a.link(c.Key(i), ar.Name, color, hover, route{page: pageArtist, id: ar.ID})
-			case ar.Name != "" && !netease:
-				a.link(c.Key(i), ar.Name, color, hover, searchRouteOn(tr.Src(), ar.Name))
+			case ar.ID != 0 && a.hasArtistPages(src):
+				a.link(c.Key(i), ar.Name, color, hover, route{page: pageArtist, src: pageSrc(src), id: ar.ID})
+			case ar.Name != "":
+				a.link(c.Key(i), ar.Name, color, hover, searchRouteOn(src, ar.Name))
 			default:
 				ui.Text(c, ar.Name)
 			}
 		}
 		if len(album) > 0 && album[0] && tr.Album.Name != "" {
 			ui.Text(c, " — ")
+			src := tr.Album.Source
+			if src == "" {
+				src = tr.Src()
+			}
 			switch {
 			case tr.PodcastID != 0:
 				a.link(c.Key("album"), tr.Album.Name, color, hover, podcast)
-			case tr.Album.ID != 0 && netease:
-				a.link(c.Key("album"), tr.Album.Name, color, hover, route{page: pageAlbum, id: tr.Album.ID})
-			case !netease:
-				a.link(c.Key("album"), tr.Album.Name, color, hover, searchRouteOn(tr.Src(), tr.Album.Name))
+			case tr.Album.ID != 0 && a.hasAlbumPages(src):
+				a.link(c.Key("album"), tr.Album.Name, color, hover, route{page: pageAlbum, src: pageSrc(src), id: tr.Album.ID})
 			default:
-				ui.Text(c, tr.Album.Name)
+				a.link(c.Key("album"), tr.Album.Name, color, hover, searchRouteOn(src, tr.Album.Name))
 			}
 		}
 	})
+}
+
+// artistSrc is the source an artist is of: theirs where their source said,
+// else the song's they are credited on.
+func artistSrc(tr *netease.Track, ar netease.Artist) string {
+	if ar.Source != "" {
+		return ar.Source
+	}
+	return tr.Src()
+}
+
+// albumSrc is the source a track's album is of.
+func albumSrc(tr *netease.Track) string {
+	if tr.Album.Source != "" {
+		return tr.Album.Source
+	}
+	return tr.Src()
+}
+
+// hasArtistPages reports whether a source has artists' pages to open: the
+// app's own for NetEase, a source's own where it says it has them.
+func (a *app) hasArtistPages(src string) bool {
+	if src == "" || src == music.SourceNetease {
+		return true
+	}
+	return a.artistPages(src) != nil
+}
+
+// hasAlbumPages reports whether a source has albums' pages to open.
+func (a *app) hasAlbumPages(src string) bool {
+	if src == "" || src == music.SourceNetease {
+		return true
+	}
+	return a.albumPages(src) != nil
 }
 
 // searchRouteOn is the page of a search of q on one source alone: what an
@@ -80,7 +121,9 @@ func (a *app) openPage(r route) {
 }
 
 // openArtist opens an artist's page in the main window.
-func (a *app) openArtist(id int64) { a.openPage(route{page: pageArtist, id: id}) }
+func (a *app) openArtist(src string, id int64) {
+	a.openPage(route{page: pageArtist, src: pageSrc(src), id: id})
+}
 
 // These load an artist, their songs, albums and events from NetEase, and
 // follow them; tests replace them.
@@ -96,6 +139,9 @@ var (
 // most popular songs, and their newest songs, albums and events once
 // asked for.
 type artistData struct {
+	// profileSrc is the source the artist is of: empty is NetEase's.
+	profileSrc    string
+	id            int64
 	profile       *netease.ArtistProfile
 	loading       bool
 	err           string
@@ -127,62 +173,100 @@ const (
 	eventsPage  = 20
 )
 
-func (a *app) artist(id int64) *artistData {
-	d := a.artists[id]
+func (a *app) artist(src string, id int64) *artistData {
+	key := sourceKey(src, id)
+	d := a.artists[key]
 	if d == nil {
-		d = &artistData{}
-		a.artists[id] = d
+		d = &artistData{profileSrc: src, id: id}
+		a.artists[key] = d
 	}
 	return d
 }
 
-// loadArtist loads an artist's page, and what it lists.
-func (a *app) loadArtist(id int64) {
-	d := a.artist(id)
+// loadArtist loads an artist's page, and what it lists, from the source
+// they are of.
+func (a *app) loadArtist(src string, id int64) {
+	d := a.artist(src, id)
 	switch a.artistTab {
 	case artistLatest:
-		a.loadLatest(id)
+		a.loadLatest(src, id)
 	case artistAlbums:
 		if !d.albumsPage.loaded {
-			a.loadAlbums(id)
+			a.loadAlbums(src, id)
 		}
 	}
 	if d.profile != nil || d.loading {
 		if a.artistTab == artistEvents && !d.eventsPage.loaded {
-			a.loadEvents(id)
+			a.loadEvents(src, id)
 		}
 		return
 	}
 	d.loading, d.err = true, ""
+	// NetEase's artists are read by the app's own calls, which is what a
+	// test replaces; a service's are asked through the registry, on the
+	// page it says it has.
+	fetch := artistDetail
+	if p := a.artistPages(src); p != nil {
+		fetch = p.Artist
+	}
 	go func() {
-		ar, err := artistDetail(id)
+		ar, err := fetch(id)
 		a.post(func() {
 			d.loading = false
 			if err != nil {
-				d.err = "歌手加载失败"
+				d.err = a.pageError(src, "歌手加载失败", err)
 				return
 			}
 			d.profile = ar
-			// Their events are their account's, which their profile names.
-			if a.artistTab == artistEvents && a.route == (route{page: pageArtist, id: id}) {
-				a.loadEvents(id)
+			// Their events are their account's, which their profile names,
+			// and NetEase's alone: the others post none the app can read.
+			if a.artistTab == artistEvents && (src == "" || src == music.SourceNetease) {
+				if a.route == (route{page: pageArtist, src: src, id: id}) {
+					a.loadEvents(src, id)
+				}
 			}
 		})
 	}()
 }
 
-func (a *app) loadLatest(id int64) {
-	d := a.artist(id)
+// artistPages is a source's artist pages, or nil for NetEase's, which are
+// the app's own calls.
+func (a *app) artistPages(src string) source.ArtistPages {
+	if src == "" || src == music.SourceNetease || a.reg == nil {
+		return nil
+	}
+	p, ok := a.reg.Get(src)
+	if !ok {
+		return nil
+	}
+	ap, _ := p.(source.ArtistPages)
+	return ap
+}
+
+func (a *app) loadLatest(src string, id int64) {
+	d := a.artist(src, id)
 	if d.latest != nil || d.latestLoading {
 		return
 	}
 	d.latestLoading, d.latestErr = true, ""
+	fetch := artistLatestSongs
+	var pages func(int64, bool, int) ([]music.Track, error)
+	if p := a.artistPages(src); p != nil {
+		fetch = nil
+		pages = p.ArtistSongs
+	}
 	go func() {
-		songs, err := artistLatestSongs(id, latestCount)
+		var songs []music.Track
+		var err error
+		if fetch != nil {
+			songs, err = fetch(id, latestCount)
+		} else {
+			songs, err = pages(id, false, latestCount)
+		}
 		a.post(func() {
 			d.latestLoading = false
 			if err != nil {
-				d.latestErr = "歌曲加载失败"
+				d.latestErr = a.pageError(src, "歌曲加载失败", err)
 				return
 			}
 			d.latest = songs
@@ -191,19 +275,32 @@ func (a *app) loadLatest(id int64) {
 }
 
 // loadAlbums loads the next page of an artist's albums.
-func (a *app) loadAlbums(id int64) {
-	d := a.artist(id)
+func (a *app) loadAlbums(src string, id int64) {
+	d := a.artist(src, id)
 	if d.albumsPage.loading {
 		return
 	}
 	d.albumsPage.loading, d.albumsPage.err = true, ""
 	offset := len(d.albums)
+	fetch := albumsBy
+	var pages func(int64, int, int) ([]music.AlbumProfile, bool, error)
+	if p := a.artistPages(src); p != nil {
+		fetch = nil
+		pages = p.ArtistAlbums
+	}
 	go func() {
-		albums, more, err := albumsBy(id, albumsPage, offset)
+		var albums []music.AlbumProfile
+		var more bool
+		var err error
+		if fetch != nil {
+			albums, more, err = fetch(id, albumsPage, offset)
+		} else {
+			albums, more, err = pages(id, albumsPage, offset)
+		}
 		a.post(func() {
 			d.albumsPage.loading = false
 			if err != nil {
-				d.albumsPage.err = "专辑加载失败"
+				d.albumsPage.err = a.pageError(src, "专辑加载失败", err)
 				return
 			}
 			d.albums = append(d.albums, albums...)
@@ -214,8 +311,8 @@ func (a *app) loadAlbums(id int64) {
 
 // loadEvents loads the next page of an artist's events, once their profile
 // says whose they are.
-func (a *app) loadEvents(id int64) {
-	d := a.artist(id)
+func (a *app) loadEvents(src string, id int64) {
+	d := a.artist(src, id)
 	if d.profile == nil || d.profile.AccountID == 0 || d.eventsPage.loading {
 		return
 	}
@@ -243,9 +340,15 @@ func (a *app) loadEvents(id int64) {
 
 // toggleFollow follows an artist, or unfollows them, at once, going back if
 // NetEase refuses. Signed out, it asks the listener to sign in.
-func (a *app) toggleFollow(id int64) {
-	d := a.artist(id)
+//
+// Following is NetEase's: a service's artist page says who they are, and
+// the follow there is done on the service's own site.
+func (a *app) toggleFollow(src string, id int64) {
+	d := a.artist(src, id)
 	if d.profile == nil || d.following {
+		return
+	}
+	if src != "" && src != music.SourceNetease {
 		return
 	}
 	if a.profile == nil {
@@ -275,11 +378,11 @@ func (a *app) toggleFollow(id int64) {
 // artistPage shows who an artist is over their songs, the most popular or
 // the newest, their albums or their events.
 func (a *app) artistPage(c *ui.Context) {
-	id := a.route.id
-	d := a.artist(id)
+	src, id := a.route.src, a.route.id
+	d := a.artist(src, id)
 	if d.profile == nil {
 		if !d.loading {
-			a.centered(c, d.err, func() { a.loadArtist(id) })
+			a.centered(c, d.err, func() { a.loadArtist(src, id) })
 			return
 		}
 		s := a.pageShimmer(c)
@@ -292,7 +395,7 @@ func (a *app) artistPage(c *ui.Context) {
 		a.scrollPage(c, func() {
 			header(c)
 			a.albumGrid(c, d.albums)
-			a.pageFoot(c, &d.albumsPage, func() { a.loadAlbums(id) })
+			a.pageFoot(c, &d.albumsPage, func() { a.loadAlbums(src, id) })
 			if d.albumsPage.loaded && len(d.albums) == 0 {
 				a.empty(c, "暂无专辑")
 			}
@@ -320,7 +423,7 @@ func (a *app) artistPage(c *ui.Context) {
 				ui.Column(c).Padding(40, 0).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, d.latestErr).TextColor(a.pal.muted).FontSize(13)
 					if ui.Button(c.Key("retry"), "重试").Clicked() {
-						a.loadLatest(d.profile.ID)
+						a.loadLatest(src, id)
 					}
 				})
 			}
@@ -397,12 +500,16 @@ func (a *app) artistHeader(c *ui.Context, d *artistData) {
 				if a.downloadEnabled() && len(songs) > 0 {
 					a.trkDownloadButton(c, songs)
 				}
-				icon, label := iconPlus, "关注"
-				if ar.Followed {
-					icon, label = iconCheck, "已关注"
-				}
-				if pillButton(c.Key("follow"), icon, label, p.hover.Over(p.bg), p.text).Clicked() {
-					a.toggleFollow(ar.ID)
+				// Following, and the events tab, are NetEase's: another
+				// source's artist page has neither to offer.
+				if d.profileSrc == "" || d.profileSrc == music.SourceNetease {
+					icon, label := iconPlus, "关注"
+					if ar.Followed {
+						icon, label = iconCheck, "已关注"
+					}
+					if pillButton(c.Key("follow"), icon, label, p.hover.Over(p.bg), p.text).Clicked() {
+						a.toggleFollow(d.profileSrc, ar.ID)
+					}
 				}
 			})
 		})
@@ -410,8 +517,12 @@ func (a *app) artistHeader(c *ui.Context, d *artistData) {
 	ui.Row(c).AlignItems(ui.Center).Margin(34, 0, 14, 0).Children(func() {
 		ui.Text(c, artistTabTitles[a.artistTab]).FontSize(19).FontWeight(700).LetterSpacing(-0.3)
 		ui.Spacer(c)
-		if segmented(c.Key("tab"), &a.artistTab, "热门", "最新", "专辑", "动态") {
-			a.loadArtist(ar.ID)
+		tabs := []string{"热门", "最新", "专辑"}
+		if d.profileSrc == "" || d.profileSrc == music.SourceNetease {
+			tabs = append(tabs, "动态")
+		}
+		if segmented(c.Key("tab"), &a.artistTab, tabs...) {
+			a.loadArtist(d.profileSrc, ar.ID)
 		}
 	})
 }

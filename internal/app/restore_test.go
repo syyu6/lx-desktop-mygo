@@ -5,6 +5,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -48,8 +49,11 @@ func TestRestoredOldLoginSignsIn(t *testing.T) {
 	a.settings = defaultSettings()
 	a.login = loginState{open: true}
 	a.oldLoginRead(a.login.gen, nil, prof, nil)
-	if a.profile != prof {
+	if a.profile == nil || a.profile.UserID != prof.UserID || a.profile.Nickname != prof.Nickname {
 		t.Fatalf("signed in as %+v, want %+v", a.profile, prof)
+	}
+	if !a.signedInTo(music.SourceNetease) {
+		t.Error("the restored login is not NetEase's account")
 	}
 	if !a.login.finished {
 		t.Error("the dialog did not show the welcome")

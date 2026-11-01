@@ -14,7 +14,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+
+	"netease-music-mygo/internal/network"
 )
+
+// modelHTTP fetches the model's files through the app's transport, as the
+// rest of the app's requests go: no timeout, as the model is hundreds of
+// megabytes.
+var modelHTTP = network.Client(0)
 
 // A file of the model, at its path in the model's directory.
 type modelFile struct {
@@ -211,7 +218,7 @@ func get(ctx context.Context, url string, out *os.File, h hash.Hash, have, size 
 	if have > 0 {
 		req.Header.Set("Range", "bytes="+strconv.FormatInt(have, 10)+"-")
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := modelHTTP.Do(req)
 	if err != nil {
 		return err
 	}

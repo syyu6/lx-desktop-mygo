@@ -70,11 +70,11 @@ func suggestionList(res netease.Suggestions) []suggestion {
 	}
 	for _, ar := range res.Artists {
 		byKind["artists"] = append(byKind["artists"], suggestion{fmt.Sprint("artist:", ar.ID), ar.Name, "", "歌手",
-			route{page: pageArtist, id: ar.ID}})
+			route{page: pageArtist, src: pageSrc(ar.Source), id: ar.ID}})
 	}
 	for _, al := range res.Albums {
 		byKind["albums"] = append(byKind["albums"], suggestion{fmt.Sprint("album:", al.ID), al.Name, al.ArtistNames(), "专辑",
-			route{page: pageAlbum, id: al.ID}})
+			route{page: pageAlbum, src: pageSrc(al.Source), id: al.ID}})
 	}
 	for _, pl := range res.Playlists {
 		byKind["playlists"] = append(byKind["playlists"], suggestion{fmt.Sprint("playlist:", pl.ID), pl.Name, pl.Creator.Nickname, "歌单",

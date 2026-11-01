@@ -21,7 +21,7 @@ func (a *app) artistEvents(c *ui.Context, d *artistData) {
 			a.event(c.Key(d.events[i].ID), &d.events[i])
 		}
 		id := d.profile.ID
-		a.pageFoot(c, &d.eventsPage, func() { a.loadEvents(id) })
+		a.pageFoot(c, &d.eventsPage, func() { a.loadEvents(d.profileSrc, id) })
 		if d.eventsPage.loaded && len(d.events) == 0 {
 			a.empty(c, "暂无动态")
 		}
@@ -58,13 +58,13 @@ func (a *app) event(c *ui.Context, e *netease.Event) {
 		case ct.Song != nil:
 			// A song has no page: its album's shows it.
 			s := ct.Song
-			a.shared(c, s.Name, "单曲 · "+s.ArtistNames(), s.Album.PicURL, route{page: pageAlbum, id: s.Album.ID})
+			a.shared(c, s.Name, "单曲 · "+s.ArtistNames(), s.Album.PicURL, route{page: pageAlbum, src: pageSrc(albumSrc(s)), id: s.Album.ID})
 		case ct.Album != nil:
-			a.shared(c, ct.Album.Name, "专辑 · "+ct.Album.ArtistNames(), ct.Album.PicURL, route{page: pageAlbum, id: ct.Album.ID})
+			a.shared(c, ct.Album.Name, "专辑 · "+ct.Album.ArtistNames(), ct.Album.PicURL, route{page: pageAlbum, src: pageSrc(ct.Album.Source), id: ct.Album.ID})
 		case ct.Playlist != nil:
 			a.shared(c, ct.Playlist.Name, "歌单 · "+ct.Playlist.Creator.Nickname, ct.Playlist.Cover(), route{page: pagePlaylist, id: ct.Playlist.ID})
 		case ct.Artist != nil:
-			a.shared(c, ct.Artist.Name, "歌手", ct.Artist.Avatar, route{page: pageArtist, id: ct.Artist.ID})
+			a.shared(c, ct.Artist.Name, "歌手", ct.Artist.Avatar, route{page: pageArtist, src: pageSrc(ct.Artist.Source), id: ct.Artist.ID})
 		case ct.Video:
 			ui.Text(c, "分享了视频，暂不支持在应用内观看").FontSize(12.5).TextColor(p.muted)
 		}

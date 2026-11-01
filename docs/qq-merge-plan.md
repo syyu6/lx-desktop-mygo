@@ -156,6 +156,17 @@ type Login interface {             // 扫码那条路
 顺序 **0 → 1 → 3 → 2 → 4 → 5 → 6**。3 排在 2 前面，是为了让 1 的成果立刻可见、可测：
 免登录那部分不碰账号，风险最低。
 
+### 落地说明（与上表的两处偏差）
+
+- **阶段 5 的代理没有新写 `internal/network/proxy.go`。** MyGo v0.7.3 自带
+  `netproxy`（macOS 走 CFNetwork、Windows 走 WinHTTP、Linux 走 GIO，带 PAC 与环境变量优先），
+  比 qyin 那份只认 `http=` / `https=` 映射的更完整。所以 `internal/network` 只做一件事：
+  统一给出所有 HTTP 客户端（`network.Client(timeout)` / `network.Transport()`），
+  各来源、播放、下载、语音模型与音源脚本都从这里取，谁也不会漏掉代理。
+- **阶段 4 的收藏专辑多了一个单向入口。** 除了「我喜欢的音乐」的专辑页，
+  专辑页自己也有「收藏专辑 / 已收藏」，走 `source.Collection` 的
+  `CollectAlbum`；网易云没有这个能力，所以没有这个按钮。
+
 ## 三、从 qyin 取什么、不取什么
 
 ### 取
@@ -188,6 +199,10 @@ type Login interface {             // 扫码那条路
 2. **QQ 歌单分类端点未实测**：qyin 完全没做广场。`Tags()` / `SquarePlaylists()` 要新写，
    候选是 `/soco/fcgi-bin/fcg_get_diss_by_tag.fcg`，但分类口径与返回形状必须先打一发
    真实请求确认。
+   <!-- 已实测（2026-11-01）：端点就是 fcg_get_diss_by_tag.fcg，按 categoryId 查；
+        页面按分类名查会一页一页都是「全部」，因此 Tags() 记下名→编号。
+        ein 是闭区间（末位也取），传 offset+limit 会让每页末尾与下一页开头重复一首，
+        传 offset+limit-1 才对。分类名带 HTML 实体（流派 · R&#38;B）。 -->
 3. **QQ 歌词没有逐字**：`yrc` 恒空，「律动」页对 QQ 歌曲退化成逐行滚动。要写进 CHANGELOG。
 4. **QQ 评论分页依赖服务端游标**：换账号或重启后游标失效，要重新打开评论。保留这个
    行为并给出中文提示。

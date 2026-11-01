@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"netease-music-mygo/internal/lyrics"
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -149,6 +150,52 @@ func TestThePageBackdropAsksForNoFrames(t *testing.T) {
 		tt.Advance(time.Second)
 		if tt.FramePending() {
 			t.Error("the page asks for frames with the backdrop still")
+		}
+	}
+}
+
+// The pages whose content a source loads ask for no frames while nothing
+// moves: the shimmer is the page's, and it ends with the list.
+func TestSourcePagesAreStillWhenIdle(t *testing.T) {
+	shop := &fakeShop{
+		songs:           []music.Track{{ID: 1, Name: "春日影", Source: "shop"}},
+		albums:          []music.AlbumProfile{{Album: music.Album{ID: 8, Name: "迷跡波", Source: "shop"}}},
+		collectedAlbums: []music.AlbumProfile{{Album: music.Album{ID: 8, Name: "迷跡波", Source: "shop"}}},
+	}
+	for _, r := range []route{
+		{page: pagePurchased},
+		{page: pagePurchased, tab: purchasedSongs},
+		{page: pagePlaylist, src: "shop", id: 201, tab: likedAlbums},
+		{page: pageAlbum, src: "shop", id: 8},
+	} {
+		a := shopTestApp(t, shop)
+		a.playlists[playlistKey("shop", 201)] = &netease.Playlist{
+			Source: "shop", ID: 201, SpecialType: 5, Name: "我喜欢",
+			Tracks: []netease.Track{{Source: "shop", ID: 1, Name: "春日影"}},
+		}
+		a.albums[sourceKey("shop", 8)] = &albumData{album: &netease.AlbumProfile{
+			Album: music.Album{ID: 8, Name: "迷跡波", Source: "shop"},
+			Songs: []netease.Track{{Source: "shop", ID: 1, Name: "春日影"}},
+		}}
+		a.open(r)
+		// As the answers land, which post drops without a window.
+		if d := a.purchased[purchasedAlbums]; d != nil {
+			a.purchasedAnswered("shop", purchasedAlbums, d, 7, nil, shop.albums, false, nil)
+		}
+		if d := a.purchased[purchasedSongs]; d != nil {
+			a.purchasedAnswered("shop", purchasedSongs, d, 7, shop.songs, nil, false, nil)
+		}
+		if d := a.collected["shop"]; d != nil {
+			a.collectedAnswered("shop", d, 7, shop.collectedAlbums, false, nil)
+		}
+		tt := ui.NewTester(a.view, 1200, 800)
+		tt.Frame()
+		for range 4 {
+			tt.Advance(time.Second)
+			if tt.FramePending() {
+				t.Errorf("%+v asks for frames with nothing moving", r)
+				break
+			}
 		}
 	}
 }

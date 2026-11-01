@@ -3,7 +3,6 @@ package app
 import (
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -212,6 +211,10 @@ func TestThePlatformRowStaysInTheDialog(t *testing.T) {
 	a := chainTestApp(t)
 	a.art = newArtCache(func(func()) {})
 	a.openSubscribeDialog()
+	// A page that names no source of its own behind the dialog: the home
+	// page has a source tab of the same names, and a tester finds the first
+	// element showing a text, not the one the test means.
+	a.route = route{page: pageDownloads}
 	for _, w := range []int{900, 1280} {
 		tt := ui.NewTester(a.view, w, 700)
 		tt.Frame()
@@ -220,30 +223,19 @@ func TestThePlatformRowStaysInTheDialog(t *testing.T) {
 			t.Fatalf("%d sources: too few to test the row", len(srcs))
 		}
 		var widest, left float32
-		for _, prefix := range []string{"按链接识别", "网易云", "酷我", "酷狗", "QQ", "咪咕"} {
-			// The row names each source shortly; a longer name is the same
-			// chip, so match by its start rather than its whole.
-			label := ""
-			for _, s := range tt.Texts() {
-				if strings.HasPrefix(s, prefix) && (label == "" || len(s) < len(label)) {
-					label = s
-				}
-			}
-			if label == "" {
-				t.Fatalf("%d wide: the row has no %q", w, prefix)
-			}
+		// The dialog is 430 wide, centred: its inner edge is what matters,
+		// and the row must not reach past the panel's right padding.
+		panel := (float32(w) - 430) / 2
+		for _, label := range []string{"按链接识别", "网易云", "酷我", "酷狗", "QQ", "咪咕"} {
 			r, ok := tt.Find(label)
 			if !ok {
-				t.Fatalf("%d wide: %q has no place", w, label)
+				t.Fatalf("%d wide: the row has no %q", w, label)
 			}
 			widest = max(widest, r.X+r.W)
 			if r.X < left || left == 0 {
 				left = r.X
 			}
 		}
-		// The dialog is 430 wide, centred: its inner edge is what matters,
-		// and the row must not reach past the panel's right padding.
-		panel := (float32(w) - 430) / 2
 		if inner := panel + 430 - 24; widest > inner {
 			t.Errorf("%d wide: the platforms end at X=%v, past the dialog's %v", w, widest, inner)
 		}

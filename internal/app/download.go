@@ -14,9 +14,15 @@ import (
 	"netease-music-mygo/internal/download"
 	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
+	"netease-music-mygo/internal/network"
 	"netease-music-mygo/internal/player"
 	"netease-music-mygo/internal/source"
 )
+
+// downloadHTTP fetches a downloaded song's bytes through the app's
+// transport, so that a listener behind a proxy downloads as they play: no
+// timeout, as the file may take a while.
+var downloadHTTP = network.Client(0)
 
 // The download engine's other half: what a task does to get its song. The
 // manager (internal/download) knows which tasks wait, run and end; this
@@ -267,7 +273,7 @@ func checkAudio(ctx context.Context, url string) error {
 	// The first bytes only: the song itself comes in after, by the file the
 	// task writes.
 	req.Header.Set("Range", "bytes=0-2047")
-	res, err := http.DefaultClient.Do(req)
+	res, err := downloadHTTP.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -357,7 +363,7 @@ func fetchStream(ctx context.Context, url string, dst *os.File, p *download.Prog
 		return errors.New("地址打不开")
 	}
 	req.Header.Set("User-Agent", netease.UserAgent)
-	res, err := http.DefaultClient.Do(req)
+	res, err := downloadHTTP.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()

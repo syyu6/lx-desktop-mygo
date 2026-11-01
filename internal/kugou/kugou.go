@@ -23,12 +23,13 @@ import (
 	"time"
 
 	"netease-music-mygo/internal/music"
+	"netease-music-mygo/internal/network"
 )
 
 // UserAgent is what Kugou's clients send, which its servers expect.
 const UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+var httpClient = network.Client(15 * time.Second)
 
 // searchBase is Kugou's search, as its Android client calls it.
 const searchBase = "http://songsearch.kugou.com/song_search_v2?platform=AndroidFilter&iscorrection=1&hifiquality=0&PrivilegeFilter=0&pagesize="

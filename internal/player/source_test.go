@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
@@ -301,6 +302,126 @@ func TestOpenReportsTheFirstFailuresReason(t *testing.T) {
 	}
 	if errors.Is(err, netease.ErrUnavailable) {
 		t.Errorf("open = %v, want the failure of the address that did not serve it", err)
+	}
+}
+
+// A song whose address at the level asked does not open is asked again one
+// level down before the listener is told it cannot play: a script names a
+// hires address its upstream no longer serves while the same song's 320k
+// still opens, and hearing it at 320k beats not hearing it.
+func TestOpenStepsDownALevelWhenTheAddressIsNoSong(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(bad.Close)
+	good := serve(t, testMP3(t), "")
+
+	var mu sync.Mutex
+	var asked []string
+	p := New(func(func()) {})
+	p.Resolve = func(t netease.Track, level string) (*netease.Stream, string, error) {
+		mu.Lock()
+		asked = append(asked, level)
+		mu.Unlock()
+		if level == "hires" || level == "lossless" {
+			return &netease.Stream{URL: bad.URL + "/dead.flac", Type: "flac", Level: level}, music.SourceQQ, nil
+		}
+		return &netease.Stream{URL: good.URL + "/song.mp3", Type: "mp3", Level: level}, music.SourceQQ, nil
+	}
+	info, s, served, err := p.open(netease.Track{ID: 1, Duration: 60000}, "hires", false)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+	if info.Level != "exhigh" {
+		t.Errorf("opened at %q, want the level that served it", info.Level)
+	}
+	if served != music.SourceQQ {
+		t.Errorf("served by %q", served)
+	}
+	if got := strings.Join(asked, ","); got != "hires,lossless,exhigh" {
+		t.Errorf("asked at %q, want each level down to the one that served", got)
+	}
+}
+
+// A source that takes the request for a song and then sends nothing fails
+// the song rather than leaving it at 「正在缓冲」: the address is given way
+// from, as one that is a 404 is, so another source that has the song can
+// play it.
+func TestOpenGivesWayFromASourceThatSaysNothing(t *testing.T) {
+	stall := make(chan struct{})
+	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-stall
+	}))
+	t.Cleanup(silent.Close)
+	t.Cleanup(func() { close(stall) })
+	good := serve(t, testMP3(t), "")
+	old := firstByte
+	firstByte = 150 * time.Millisecond
+	defer func() { firstByte = old }()
+
+	p := New(func(func()) {})
+	p.ResolveExcept = func(t netease.Track, level, skip string) (*netease.Stream, string, string, error) {
+		switch skip {
+		case "":
+			return &netease.Stream{URL: silent.URL, Type: "flac", Level: level}, music.SourceQQ, "script-a", nil
+		case "script-a":
+			return &netease.Stream{URL: good.URL, Type: "mp3", Level: level}, music.SourceKuwo, "kw", nil
+		}
+		return nil, "", "", netease.ErrUnavailable
+	}
+	_, s, served, err := p.open(netease.Track{ID: 1, Duration: 60000}, "exhigh", false)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+	if served != music.SourceKuwo {
+		t.Errorf("served by %q, want the source that answered", served)
+	}
+}
+
+// A run of songs that cannot play stops at the third: the listener who
+// pressed play hears why rather than the player walking the whole list,
+// song by failing song, to its end.
+func TestOpenStopsSkippingAfterARunOfFailures(t *testing.T) {
+	ch := make(chan func(), 16)
+	p := New(func(fn func()) { ch <- fn })
+	p.Quality = func() string { return "exhigh" }
+	var mu sync.Mutex
+	var asked []int64
+	p.Resolve = func(t netease.Track, level string) (*netease.Stream, string, error) {
+		mu.Lock()
+		asked = append(asked, t.ID)
+		mu.Unlock()
+		return nil, "", netease.ErrUnavailable
+	}
+	p.PlayQueue([]netease.Track{{ID: 1}, {ID: 2}, {ID: 3}, {ID: 4}, {ID: 5}}, 0)
+	// Run what it posts on the "main thread", as the app does, until it has
+	// gone quiet: a skip posts the next load, which posts its own failure.
+	for {
+		select {
+		case fn := <-ch:
+			fn()
+			continue
+		case <-time.After(200 * time.Millisecond):
+		}
+		if !p.Loading() {
+			break
+		}
+	}
+	mu.Lock()
+	got := append([]int64(nil), asked...)
+	mu.Unlock()
+	if len(got) != skipAhead+1 {
+		t.Fatalf("asked for %v, want %d songs and then a stop", got, skipAhead+1)
+	}
+	if p.Playing() {
+		t.Error("still playing after every song it tried failed")
+	}
+	if p.Err() == "" {
+		t.Error("stopped without saying why")
 	}
 }
 

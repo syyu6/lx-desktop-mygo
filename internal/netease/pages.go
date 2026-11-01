@@ -137,20 +137,6 @@ func (Provider) LikeComment(thread string, id int64, on bool) error {
 	return LikeComment(thread, id, on)
 }
 
-// PurchasedSongs and PurchasedAlbums are what the listener bought, which
-// NetEase sells nothing of: it has no shop, so the page is not offered.
-func (Provider) PurchasedSongs(limit, offset int) ([]music.Track, bool, error) {
-	return nil, false, errNoShop
-}
-
-func (Provider) PurchasedAlbums(limit, offset int) ([]music.AlbumProfile, bool, error) {
-	return nil, false, errNoShop
-}
-
-// Membership is what the listener's NetEase account is, which NetEase
-// does not say to an app outside its own: unknown, as it is to it.
-func (Provider) Membership() (music.Membership, error) {
-	return music.MembershipUnknown, errNoShop
-}
-
-var errNoShop = errors.New("netease: nothing is sold here")
+// NetEase sells nothing and says nothing of an account's membership to an
+// app outside its own, so Provider has no source.Extras: the pages that
+// show what was bought are not offered for it, rather than show empty.

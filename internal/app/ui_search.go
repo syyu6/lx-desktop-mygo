@@ -20,9 +20,10 @@ var (
 // searchLimit is how many results load at a time.
 const searchLimit = 60
 
-// searchKind is a kind of search, as its tab shows it. NetEase's alone
-// has artists, albums, users and podcasts, so those tabs show while the
-// listener asks it.
+// searchKind is a kind of search, as its tab shows it. Songs and playlists
+// are searched on every source; artists and albums on every source that
+// finds them; users and podcasts are NetEase's own, and their tabs show
+// while the listener asks it.
 type searchKind struct {
 	kind        netease.SearchType
 	label, unit string
@@ -33,15 +34,15 @@ type searchKind struct {
 var searchKinds = []searchKind{
 	{kind: netease.SearchSongs, label: "单曲", unit: "首单曲"},
 	{kind: netease.SearchPlaylists, label: "歌单", unit: "个歌单"},
-	{kind: netease.SearchArtists, label: "歌手", unit: "位歌手", neteaseOnly: true},
-	{kind: netease.SearchAlbums, label: "专辑", unit: "张专辑", neteaseOnly: true},
+	{kind: netease.SearchArtists, label: "歌手", unit: "位歌手"},
+	{kind: netease.SearchAlbums, label: "专辑", unit: "张专辑"},
 	{kind: netease.SearchUsers, label: "用户", unit: "位用户", neteaseOnly: true},
 	{kind: netease.SearchPodcasts, label: "播客", unit: "个播客", neteaseOnly: true},
 }
 
 // searchTabKind is kind where the tabs show it now, or else songs: NetEase's
-// catalogue turned off leaves no artists, albums, users or podcasts to look
-// for.
+// catalogue turned off leaves no users or podcasts to look for, and no
+// sources finding artists leaves their tab away.
 func (a *app) searchTabKind(kind netease.SearchType) netease.SearchType {
 	if kind == 0 {
 		return netease.SearchSongs
@@ -56,15 +57,39 @@ func (a *app) searchTabKind(kind netease.SearchType) netease.SearchType {
 
 // searchTabs are the kinds of search the listener may choose now.
 func (a *app) searchTabs() []searchKind {
-	netease := a.searchesOn(music.SourceNetease)
+	on := a.searchesOn(music.SourceNetease)
+	people := a.anyPeopleSource()
 	var out []searchKind
 	for _, k := range searchKinds {
-		if k.neteaseOnly && !netease {
+		switch {
+		case k.neteaseOnly && !on:
+			continue
+		case (k.kind == netease.SearchArtists || k.kind == netease.SearchAlbums) && !people:
 			continue
 		}
 		out = append(out, k)
 	}
 	return out
+}
+
+// anyPeopleSource reports whether any source the listener searches finds
+// artists and albums. A registry that is not there is the app as a test
+// builds it, whose searches are NetEase's.
+func (a *app) anyPeopleSource() bool {
+	if a.reg == nil {
+		return true
+	}
+	for _, id := range a.reg.SearchedSources() {
+		if id == music.SourceNetease {
+			return true
+		}
+		if c, ok := a.reg.Catalog(id); ok {
+			if _, ok := c.(source.PeopleSearcher); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // searchData is what a search found, as far as its pages have loaded.
@@ -151,14 +176,136 @@ func (a *app) searchAll(r route, limit, offset int) (netease.SearchResult, error
 		case netease.SearchPlaylists:
 			res, err := a.searchPlaylists(query, r.only, limit, offset)
 			return netease.SearchResult{Playlists: res.Playlists, Total: res.Total}, err
+		case netease.SearchArtists:
+			artists, total, err := a.searchArtists(query, r.only, limit, offset)
+			return netease.SearchResult{Artists: artists, Total: total}, err
+		case netease.SearchAlbums:
+			albums, total, err := a.searchAlbums(query, r.only, limit, offset)
+			return netease.SearchResult{Albums: albums, Total: total}, err
 		}
-		// Artists and the rest are NetEase's alone, and are not asked while
-		// it is turned off.
+		// Users and podcasts are NetEase's alone, and are not asked while it
+		// is turned off.
 		if !a.reg.Searched(music.SourceNetease) {
 			return netease.SearchResult{}, source.ErrNoSource
 		}
 	}
 	return searchResults(query, kind, limit, offset)
+}
+
+// searchArtists finds artists on one search source, or on every one the
+// listener searches that finds them. A source that finds none is not a
+// failure: it is an answer with nothing in it.
+func (a *app) searchArtists(query, only string, limit, offset int) ([]music.ArtistProfile, int, error) {
+	var ids []string
+	if only != "" {
+		ids = []string{only}
+	} else if a.reg != nil {
+		for _, id := range a.reg.SearchedSources() {
+			if c, ok := a.reg.Catalog(id); ok {
+				if _, ok := c.(source.PeopleSearcher); ok {
+					ids = append(ids, id)
+				}
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, 0, source.ErrNoSource
+	}
+	var (
+		out   []music.ArtistProfile
+		total int
+		asked int
+		fail  error
+	)
+	for _, id := range ids {
+		c, _ := a.reg.Catalog(id)
+		if id == "" || id == music.SourceNetease {
+			if !a.searchesOn(music.SourceNetease) {
+				continue
+			}
+			res, err := searchResults(query, netease.SearchArtists, limit, offset)
+			asked++
+			fail = err
+			if err == nil {
+				out, total = append(out, res.Artists...), total+res.Total
+			}
+			continue
+		}
+		ps, ok := c.(source.PeopleSearcher)
+		if !ok {
+			continue
+		}
+		found, n, err := ps.SearchArtists(query, limit, offset)
+		asked++
+		fail = err
+		if err == nil {
+			out, total = append(out, found...), total+n
+		}
+	}
+	if asked == 0 {
+		return nil, 0, source.ErrNoSource
+	}
+	if out == nil && fail != nil {
+		return nil, 0, fail
+	}
+	return out, total, nil
+}
+
+// searchAlbums finds albums, as searchArtists finds artists.
+func (a *app) searchAlbums(query, only string, limit, offset int) ([]music.AlbumProfile, int, error) {
+	var ids []string
+	if only != "" {
+		ids = []string{only}
+	} else if a.reg != nil {
+		for _, id := range a.reg.SearchedSources() {
+			if c, ok := a.reg.Catalog(id); ok {
+				if _, ok := c.(source.PeopleSearcher); ok {
+					ids = append(ids, id)
+				}
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, 0, source.ErrNoSource
+	}
+	var (
+		out   []music.AlbumProfile
+		total int
+		asked int
+		fail  error
+	)
+	for _, id := range ids {
+		c, _ := a.reg.Catalog(id)
+		if id == "" || id == music.SourceNetease {
+			if !a.searchesOn(music.SourceNetease) {
+				continue
+			}
+			res, err := searchResults(query, netease.SearchAlbums, limit, offset)
+			asked++
+			fail = err
+			if err == nil {
+				out, total = append(out, res.Albums...), total+res.Total
+			}
+			continue
+		}
+		ps, ok := c.(source.PeopleSearcher)
+		if !ok {
+			continue
+		}
+		found, n, err := ps.SearchAlbums(query, limit, offset)
+		asked++
+		fail = err
+		if err == nil {
+			out, total = append(out, found...), total+n
+		}
+	}
+	if asked == 0 {
+		return nil, 0, source.ErrNoSource
+	}
+	if out == nil && fail != nil {
+		return nil, 0, fail
+	}
+	return out, total, nil
 }
 
 // searchSongs searches the songs on one search source, or on every one the
@@ -334,9 +481,16 @@ func (a *app) searchSourceBar(c *ui.Context) {
 			continue
 		}
 		// A kind of search a source has not is not offered for it.
-		if r.kind == netease.SearchPlaylists {
+		switch r.kind {
+		case netease.SearchPlaylists:
 			if _, ok := c.(source.Searcher); !ok {
 				continue
+			}
+		case netease.SearchArtists, netease.SearchAlbums:
+			if id != music.SourceNetease {
+				if _, ok := c.(source.PeopleSearcher); !ok {
+					continue
+				}
 			}
 		}
 		if id == r.only {
@@ -395,6 +549,12 @@ func (a *app) searchedSources(k searchKind) string {
 				continue
 			}
 		}
+		if (k.kind == netease.SearchArtists || k.kind == netease.SearchAlbums) && id != music.SourceNetease {
+			// Artists and albums come from the sources that find them.
+			if _, ok := c.(source.PeopleSearcher); !ok {
+				continue
+			}
+		}
 		names = append(names, shortSource(c.Name()))
 	}
 	return strings.Join(names, "、")
@@ -420,6 +580,6 @@ func (a *app) artistCard(c *ui.Context, ar *netease.ArtistProfile) {
 		ui.Text(c, ar.Name).FontSize(13).FontWeight(500).SingleLine().AlignSelf(ui.Center)
 	})
 	if card.Clicked() {
-		a.open(route{page: pageArtist, id: ar.ID})
+		a.open(route{page: pageArtist, src: pageSrc(ar.Source), id: ar.ID})
 	}
 }

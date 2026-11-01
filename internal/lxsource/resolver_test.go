@@ -81,8 +81,32 @@ send(EVENT_NAMES.inited, { sources: { wy: { name: '网易云音乐', type: 'musi
 	}
 }
 
-// TestResolverSkipsAScriptThatDoesNotStart checks that a script that will
-// not run is passed over rather than kept the stream of a song.
+// TestResolverWalksToTheFootOfTheLadder checks that the qualities under the
+// one asked are all tried, not just the next: QQ Music's scripts answer at
+// the lowest and not at hires or lossless, and one step down from hires is
+// lossless — still empty.
+func TestResolverWalksToTheFootOfTheLadder(t *testing.T) {
+	bottomOnly := `/*!
+ * @name 只在低音质有歌的音源
+ */
+const { EVENT_NAMES, on, send } = globalThis.lx;
+on(EVENT_NAMES.request, ({ action, info }) => {
+  if (action !== 'musicUrl') return Promise.reject(new Error('不支持'));
+  if (info.type !== '320k') return Promise.reject(new Error('没有这个音质'));
+  return 'https://bottom.example.invalid/' + info.musicInfo.id + '.m4a';
+});
+send(EVENT_NAMES.inited, { sources: { tx: { name: 'QQ音乐', type: 'music', actions: ['musicUrl'], qualitys: ['128k', '320k', 'flac', 'flac24bit'] } } });
+`
+	r, _, _ := resolverOf(t, bottomOnly)
+	url, err := r.Stream(Track{Source: SourceTencent, ID: "1"}, QualityFlac24bit)
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if !strings.Contains(url, "bottom.example.invalid") {
+		t.Errorf("Stream = %q, want the only quality the script has", url)
+	}
+}
+
 func TestResolverSkipsAScriptThatDoesNotStart(t *testing.T) {
 	broken := `/*!
  * @name 跑不起来的音源
@@ -234,7 +258,9 @@ func TestResolverSweepsIdleScripts(t *testing.T) {
 }
 
 // A script that hung is let go of by the sweep, as any other is, and is
-// not asked again: its runtime is dead, and a new one would hang the same.
+// not asked again until its wait is over: its runtime is dead, and asking
+// it now would only hang again. A source that is briefly unwell is asked
+// again later, rather than being dead for the session.
 func TestResolverSweepLetsGoOfAHungScript(t *testing.T) {
 	r, _, ids := resolverOf(t, script(t, "simple.js"))
 	if _, err := r.Stream(Track{Source: SourceNetease, ID: "5"}, Quality320k); err != nil {
@@ -245,12 +271,51 @@ func TestResolverSweepLetsGoOfAHungScript(t *testing.T) {
 		t.Errorf("Sweep let go of %d runtimes, want the hung one", n)
 	}
 	if _, err := r.Stream(Track{Source: SourceNetease, ID: "5"}, Quality320k); !errors.Is(err, ErrNoSource) {
-		t.Errorf("Stream = %v, want no source: the script hung", err)
+		t.Errorf("Stream = %v, want no source: the script is cooling down", err)
 	}
 	r.mu.Lock()
-	engines, broken := len(r.engines), r.broken[ids[0]]
+	engines, until := len(r.engines), r.down[ids[0]]
 	r.mu.Unlock()
-	if engines != 0 || !broken {
-		t.Errorf("%d runtimes again, broken %v", engines, broken)
+	if engines != 0 || !until.After(time.Now()) {
+		t.Errorf("%d runtimes again, cooling down until %v", engines, until)
+	}
+	// Its wait over — as it is when the source was slow for a minute — it
+	// is asked again, and answers.
+	r.mu.Lock()
+	r.down[ids[0]] = time.Now().Add(-time.Second)
+	r.mu.Unlock()
+	if _, err := r.Stream(Track{Source: SourceNetease, ID: "5"}, Quality320k); err != nil {
+		t.Errorf("Stream after the wait: %v", err)
+	}
+	// Having answered, it waits for nothing: the next song asks it first.
+	r.mu.Lock()
+	failures, until := r.failures[ids[0]], r.down[ids[0]]
+	r.mu.Unlock()
+	if failures != 0 || !until.IsZero() {
+		t.Errorf("%d failures, cooling down until %v, want none", failures, until)
+	}
+}
+
+// A script that keeps hanging waits longer each time, so that a source that
+// never answers costs one song's wait rather than every song's.
+func TestResolverWaitsLongerEachFailure(t *testing.T) {
+	r, _, ids := resolverOf(t, script(t, "simple.js"))
+	id := ids[0]
+	var last time.Duration
+	for i := 1; i <= 6; i++ {
+		r.mu.Lock()
+		before := time.Now()
+		r.coolDownLocked(id)
+		wait := r.down[id].Sub(before).Round(time.Second)
+		r.mu.Unlock()
+		want := downFor << min(i-1, 8)
+		want = min(want, downMax)
+		if i > 1 && wait <= last && wait < downMax {
+			t.Errorf("wait %v after %d failures, want longer than the %v before", wait, i, last)
+		}
+		if wait != want.Round(time.Second) {
+			t.Errorf("wait %v after %d failures, want %v", wait, i, want)
+		}
+		last = wait
 	}
 }

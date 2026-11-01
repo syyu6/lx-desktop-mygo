@@ -9,6 +9,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -48,7 +49,7 @@ var skeletonScenes = []struct {
 func skeletonApp(set func(a *app)) *app {
 	a := newTestApp()
 	a.settings = defaultSettings()
-	a.homeLoading = true
+	a.home(music.SourceNetease).at = time.Now()
 	a.pl.Cue([]netease.Track{{ID: 1, Name: "春日影"}})
 	set(a)
 	return a

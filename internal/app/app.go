@@ -2,11 +2,13 @@ package app
 
 import (
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/account"
 	"netease-music-mygo/internal/download"
 	"netease-music-mygo/internal/lxsource"
 	"netease-music-mygo/internal/music"
@@ -34,12 +36,16 @@ const (
 	// pageDownloads is the download manager, shown only while downloads are
 	// on: with them off its sidebar entry is gone.
 	pageDownloads
+	// pagePurchased is what the listener bought from a source that sells:
+	// shown while such a source is signed in, as NetEase has none.
+	pagePurchased
 )
 
 type route struct {
 	page pageKind
-	// src is the source the page shows the thing of: a playlist's service.
-	// Empty is NetEase's, as the app's own pages are.
+	// src is the source the page shows the thing of: a playlist's service,
+	// an artist's, an album's, a listener's. Empty is NetEase's, as the
+	// app's own pages are.
 	src string
 	// id is the playlist, artist, album, user or podcast the page shows.
 	// Every source numbers its playlists, so one id serves them all; src
@@ -50,11 +56,34 @@ type route struct {
 	query string
 	kind  netease.SearchType
 	only  string
+	// tab is which of a page's tabs it shows: the purchased page's albums or
+	// songs, counted from zero. Other pages keep their tab in the app, as
+	// the artist's and the download manager's do.
+	tab int
 }
 
 // key names a playlist in the source it is from, as a page is routed to.
 func playlistRoute(src string, id int64) route {
 	return route{page: pagePlaylist, src: src, id: id}
+}
+
+// sourceKey names anything a source numbers — a playlist, an artist, an
+// album, a listener — among every source's: a source's id, and the number
+// it gave it.
+func sourceKey(src string, id int64) string {
+	if src == "" {
+		src = music.SourceNetease
+	}
+	return src + "/" + strconv.FormatInt(id, 10)
+}
+
+// pageSrc is a source id as a route names it: empty for NetEase, which the
+// app's own pages leave out, as they always have.
+func pageSrc(src string) string {
+	if src == music.SourceNetease {
+		return ""
+	}
+	return src
 }
 
 // app is the state both windows show. Everything in it is read and changed
@@ -88,33 +117,44 @@ type app struct {
 	profile      *netease.Profile
 	mine, saved  []netease.Playlist // the listener's playlists: made, and saved
 	recPlaylists []netease.Playlist // the day's playlists picked for the listener
-	login        loginState
-	naming       nameDialog     // the name of a playlist asked for
-	deleting     deleteDialog   // whether to delete a playlist, asked
-	liked        map[int64]bool // the songs the listener likes
-	toast        string         // a message to show once
-	picked       pickedUp       // the song a login picked up, waiting to play
+	// accounts is who is signed in to each source, by source id: a source
+	// has one account, and every source's is signed in on its own (see
+	// ui_account.go). NetEase's is also kept in profile above, which is what
+	// its own pages read.
+	accounts map[string]*account.Profile
+	login    loginState
+	naming   nameDialog   // the name of a playlist asked for
+	deleting deleteDialog // whether to delete a playlist, asked
+	// The songs the listener likes, by Track.Ident(): two sources number
+	// their songs alike, and a song liked on one is not the other's.
+	liked  map[string]bool
+	toast  string   // a message to show once
+	picked pickedUp // the song a login picked up, waiting to play
 
 	// The episodes the listener likes, and doesn't, as far as NetEase has
 	// answered, and those asked about: see ui_like.go.
 	likedPrograms, askedPrograms map[int64]bool
 
-	daily       []netease.Track
-	dailySpin   spinState // the record on the daily card
-	dailyBars   barState  // the bars on its play button
-	featured    []netease.Playlist
-	charts      []netease.Playlist
-	homeErr     string
-	homeLoading bool
-	homeAt      time.Time // when what the home page shows was asked for
+	daily     []netease.Track
+	dailySpin spinState // the record on the daily card
+	dailyBars barState  // the bars on its play button
+	// homes is what each source's home page has loaded, by source id, and
+	// homePick the source whose home the listener last looked at: the pages
+	// that show what a source offers read it (ui_pages.go). Sums the same
+	// shape as the square, which did this first.
+	homes    map[string]*homeState
+	homePick string
 
-	playlists  map[string]*netease.Playlist // by playlistKey
-	loadingPl  map[string]bool
-	plErr      map[string]string
-	artists    map[int64]*artistData
+	playlists map[string]*netease.Playlist // by playlistKey
+	loadingPl map[string]bool
+	plErr     map[string]string
+	// The artists, albums and listeners the app has loaded, by the key
+	// their page is routed to (sourceKey): two sources number an artist
+	// alike, and their artists are not the same.
+	artists    map[string]*artistData
 	artistTab  int // what an artist's page lists: artistHot, artistLatest, artistAlbums or artistEvents
-	albums     map[int64]*albumData
-	users      map[int64]*userData
+	albums     map[string]*albumData
+	users      map[string]*userData
 	podcasts   map[int64]*podcastData
 	podcastTab *podcastTab // the podcasts tab's lists
 	trackList  ui.ListState
@@ -183,7 +223,13 @@ type app struct {
 	settings    settings
 	settingsWin *mygo.Window
 	cacheUsed   int64 // the bytes the song cache takes, -1 until measured
-	updates     bool  // the update plugin is used (useUpdater)
+	// The cache's folder being moved to another: the move runs before
+	// playback comes back, and the window says so until it ends
+	// (cache_directory.go).
+	cacheMoving                   bool
+	cacheMoveDone, cacheMoveTotal int64
+	cacheDirErr                   string
+	updates                       bool // the update plugin is used (useUpdater)
 
 	// The downloads: the manager that runs them, and the page's own state,
 	// the tab shown and the tasks chosen (ui_downloads.go). dlChoices holds
@@ -297,6 +343,13 @@ type app struct {
 	// source whose square the listener chose (ui_songlists.go).
 	square     *squareState
 	squarePick string
+	// purchased is what the purchased page's two tabs have loaded, by tab,
+	// and purchasePick the source whose shop the page showed (ui_purchased.go).
+	purchased    [2]*purchasedData
+	purchasePick string
+	// collected is the albums each source's account collected, by source id
+	// (ui_purchased.go): shown beside the songs liked, on the page of them.
+	collected map[string]*collectedData
 	// subs are the playlists the listener follows from another service, and
 	// subSyncing those being fetched again (ui_subscriptions.go).
 	subs         *subscription.Store
@@ -352,9 +405,9 @@ func Run() error {
 		playlists:  map[string]*netease.Playlist{},
 		loadingPl:  map[string]bool{},
 		plErr:      map[string]string{},
-		artists:    map[int64]*artistData{},
-		albums:     map[int64]*albumData{},
-		users:      map[int64]*userData{},
+		artists:    map[string]*artistData{},
+		albums:     map[string]*albumData{},
+		users:      map[string]*userData{},
 		podcasts:   map[int64]*podcastData{},
 		podcastTab: &podcastTab{},
 		searches:   map[route]*searchData{},
@@ -383,7 +436,7 @@ func Run() error {
 		a.pl.Quality = func() string { return a.settings.Quality }
 		a.pl.Normalize = func() bool { return a.settings.Normalize }
 		a.pl.Prefetch = func() bool { return a.settings.Prefetch }
-		a.pl.Cache = newSongCache(a.settings.CacheMB)
+		a.pl.Cache = newSongCache(a.settings)
 		// The listener's own sources are read before the player can ask for
 		// a song: a script's runtime starts when it is first asked.
 		a.loadSources()
@@ -423,7 +476,15 @@ func Run() error {
 			Content:              ui.View(a.view),
 		})
 		a.setMenu()
-		a.boot()
+		// A migration the listener asked for runs before the accounts come
+		// back, since restoring playback would open a song the move is
+		// taking from under it.
+		a.cacheMoving = a.settings.PendingCacheDir != nil
+		if a.cacheMoving {
+			a.startCacheMigration()
+		} else {
+			a.boot()
+		}
 		// The playlists the listener follows are fetched again, those kept up
 		// to date: their copies showed already.
 		a.autoSyncSubscriptions()

@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"netease-music-mygo/internal/network"
 )
 
 // A Store keeps the scripts the listener imported, in a directory of its
@@ -31,7 +33,7 @@ func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("音源目录: %w", err)
 	}
-	return &Store{dir: dir, http: &http.Client{Timeout: 30 * time.Second}}, nil
+	return &Store{dir: dir, http: network.Client(30 * time.Second)}, nil
 }
 
 // ErrNotFound is returned for a script the store does not have.

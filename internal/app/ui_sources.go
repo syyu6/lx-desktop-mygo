@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/account"
 	"netease-music-mygo/internal/lxsource"
 	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/source"
@@ -178,9 +179,10 @@ func (a *app) pickSourceFile() {
 //
 //   - 内置源: the services the app ships, in the listener's order. The
 //     order is the order they are searched in, asked for a song's words
-//     in, and played from. Each service is one row, which opens to its
-//     own switches: 曲库 (its catalogue searched, its square and its own
-//     pages shown), 单曲 (its songs played), 歌词 and 评论. They are
+//     in, and played from. Each service is one row: its name with whether
+//     the listener is signed in to it, and, opened, 功能 — 曲库 (its
+//     catalogue searched), 单曲 (its songs played), 歌词 and 评论 — and
+//     页面 — 推荐、排行榜、歌单, the pages it may be browsed on. They are
 //     apart: a source may have a catalogue the app cannot stream from
 //     (Kugou needs a signed address), and a source kept for playing is
 //     still not asked for a search.
@@ -191,94 +193,229 @@ func (a *app) pickSourceFile() {
 // A service's songs were one switch before this, searched and played
 // together: with them apart, turning off a source's 单曲 no longer takes
 // its catalogue out of a search.
+//
+// The pages are the source's own switches rather than a group of their
+// own: "QQ Music in 推荐" is a thing about QQ Music, and the row is where
+// the listener already is when they think it. A page a source has only one
+// of left offers no switch for it — turning it off would be turning the
+// page off — and a source with no catalogue is not offered any page, since
+// it could not be searched there anyway.
 func (a *app) sourceSettings(group func(string, func()), row func(string, string, func()), rowWith func(string, string, func(), func()), c *ui.Context) {
-	a.accountSettings(group, row, c)
-	a.builtinSourceSettings(group, rowWith, c)
+	a.builtinSourceSettings(group, row, rowWith, c)
 	a.scriptSourceSettings(group, row, rowWith, c)
 }
 
 // builtinSourceSettings is the group of built-in sources: the services the
 // app ships, in the listener's order, each opening to what is asked of it.
-func (a *app) builtinSourceSettings(group func(string, func()), rowWith func(string, string, func(), func()), c *ui.Context) {
+//
+// The row is the app's standard one but for its name, which carries the
+// sign-in state beside it: a listener scanning the list wants to know who
+// they are signed in to without opening five rows, and the account line
+// under an opened row would say it a second time.
+func (a *app) builtinSourceSettings(group func(string, func()), row func(string, string, func()), rowWith func(string, string, func(), func()), c *ui.Context) {
 	group("内置源", func() {
 		if a.reg == nil {
 			rowWith("内置源不可用", "内置源未能载入", func() {}, nil)
 			return
 		}
-		ui.Column(c).Padding(12, 16).Gap(4).Children(func() {
-			ui.Text(c, "顺序就是查找顺序：先搜到的排在前面，找不到歌词时也按这个顺序问下一个来源。").
-				FontSize(12).TextColor(a.pal.muted).LineHeight(1.45)
-			ui.Text(c, "曲库管搜索与歌单，单曲管播放，歌词与评论只管取用：关掉一个来源的单曲，它仍会被搜到；关掉曲库，它仍能放歌。").
-				FontSize(12).TextColor(a.pal.muted).LineHeight(1.45)
-		})
+		a.sourcesLegend(c)
 		order := a.sourceOrder()
 		for i, id := range order {
 			i, id := i, id
 			name, desc := a.builtinSourceInfo(id)
 			last := i == len(order)-1
 			open := a.sourceOpen(id)
-			rowWith(name, desc, func() {
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					a.sourceArrows(c, id, i == 0, last, false)
-					// Opening the row is what the arrow at its end does: the
-					// switches are within. It turns to point the way they go,
-					// down while closed and up while open, and is given the
-					// room a control of the row's own takes rather than the
-					// size of the pair beside it.
-					arrow := iconDown
-					if open {
-						arrow = iconUp
-					}
-					openBtn := iconButton(c.Key("open-"+id), arrow, 15, a.pal.muted, "开关").Size(26, 26).Radius(6)
-					if openBtn.Hovered() {
-						openBtn.Background(a.pal.hover)
-					}
-					if openBtn.Clicked() {
-						a.setSourceOpen(id, !open)
-					}
-				})
-			}, func() {
-				if !open {
-					return
-				}
-				a.sourceCaps(c, id, name)
-			})
+			a.sourceRow(c, id, name, desc, i == 0, last, open)
 		}
 	})
 }
 
+// sourcesLegend is what the group says before its rows: what the order
+// means, and what each kind of switch does.
+func (a *app) sourcesLegend(c *ui.Context) {
+	p := a.pal
+	ui.Column(c).Padding(12, 16).Gap(4).Children(func() {
+		ui.Text(c, "顺序就是查找顺序：先搜到的排在前面，找不到歌词时也按这个顺序问下一个来源。").
+			FontSize(12).TextColor(p.muted).LineHeight(1.45)
+		ui.Text(c, "功能管这个来源做什么：曲库查得到，单曲放得出，歌词与评论只管取用。页面管它在哪一页出现：关掉 QQ 音乐的推荐，推荐页就只切换其余来源。").
+			FontSize(12).TextColor(p.muted).LineHeight(1.45)
+	})
+}
+
+// sourceRow is one built-in source: its name and sign-in state, what it is,
+// and its arrows; opened, the account, then its functions and its pages as
+// two rows of switches.
+func (a *app) sourceRow(c *ui.Context, id, name, desc string, first, last, open bool) {
+	p := a.pal
+	ui.Row(c).Padding(12, 16).Gap(16).AlignItems(ui.Center).MinHeight(48).Children(func() {
+		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(3).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, name).FontSize(13.5).FontWeight(500)
+				// Open, the account line under this one says who is
+				// listening: the pill would say it twice.
+				if !open {
+					a.signInPill(c, id)
+				}
+			})
+			ui.Text(c, desc).FontSize(12).TextColor(p.muted).LineHeight(1.4)
+			if !open {
+				return
+			}
+			// The account is the source's own: signed in here, under the
+			// source it is for, rather than in a group of its own.
+			if _, ok := account.LoginOf(id); ok {
+				a.accountRow(c, id)
+			}
+			a.sourceCaps(c, id, name)
+			a.sourcePages(c, id, name)
+		})
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			a.sourceArrows(c, id, first, last, false)
+			// Opening the row is what the arrow at its end does: the
+			// switches are within. It turns to point the way they go, down
+			// while closed and up while open, and is given the room a
+			// control of the row's own takes rather than the size of the
+			// pair beside it.
+			arrow := iconDown
+			if open {
+				arrow = iconUp
+			}
+			openBtn := iconButton(c.Key("open-"+id), arrow, 15, p.muted, "开关").Size(26, 26).Radius(6)
+			if openBtn.Hovered() {
+				openBtn.Background(p.hover)
+			}
+			if openBtn.Clicked() {
+				a.setSourceOpen(id, !open)
+			}
+		})
+	})
+}
+
+// signInPill says whether the listener is signed in to a source: a source
+// without a sign-in at all says nothing, since there is nothing to be.
+func (a *app) signInPill(c *ui.Context, id string) {
+	if _, ok := account.LoginOf(id); !ok {
+		return
+	}
+	p := a.pal
+	label, bg, dot := "未登录", p.hover, p.faint
+	if a.accountProfile(id) != nil {
+		label, bg, dot = "已登录", p.accent.Alpha(0.14), p.accent
+	}
+	ui.Row(c).Height(18).PaddingX(8).Radius(999).Gap(5).AlignItems(ui.Center).Background(bg).Children(func() {
+		ui.Box(c).Size(5, 5).Radius(999).Background(dot)
+		ui.Text(c, label).FontSize(11).TextColor(p.text).SingleLine()
+	})
+}
+
+// sourcePages builds a built-in source's row of pages: the ones it may be
+// browsed on. A source with no catalogue is offered none — it could not be
+// searched there anyway — and a page the source is the last on offers no
+// switch, since turning it off would be turning the page off.
+func (a *app) sourcePages(c *ui.Context, id, name string) {
+	p := a.pal
+	var pages []struct {
+		page  tabPage
+		label string
+		icon  *ui.SVG
+	}
+	for _, t := range tabPages {
+		if !a.pageHas(t.page, id) {
+			continue
+		}
+		pages = append(pages, struct {
+			page  tabPage
+			label string
+			icon  *ui.SVG
+		}{t.page, t.label, pageIcon(t.page)})
+	}
+	if len(pages) == 0 {
+		return
+	}
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(2, 0, 0, 0).Children(func() {
+		ui.Text(c, "页面").FontSize(10.5).TextColor(p.faint).Width(24).SingleLine()
+		ui.Row(c).Gap(6).Wrap().Grow(1).Children(func() {
+			for _, t := range pages {
+				t := t
+				on := a.pageOn(t.page, id)
+				// Without a catalogue the source is in no search, and so in
+				// no page: the row says so rather than offer a switch that
+				// does nothing.
+				shelved := !a.reg.Asked(id, source.CapLibrary)
+				alone := on && a.pageAlone(t.page, id)
+				chip := ui.ButtonBase(c.Key("page-" + id + "-" + string(t.page))).Height(26).PaddingX(10).Gap(6).Radius(999).
+					AlignItems(ui.Center).FocusRing(false).Label(name + " · " + t.label)
+				switch {
+				case shelved || alone:
+					chip.Disabled(true).Opacity(0.4)
+				case on:
+					chip.Background(p.accent.Alpha(0.14)).TextColor(p.text)
+				default:
+					chip.Background(p.hover).TextColor(p.muted)
+				}
+				if !shelved && !alone && chip.Hovered() {
+					chip.Background(p.press)
+				}
+				chip.Children(func() {
+					ui.Icon(c, t.icon).Size(11, 11).TextColor(capColor(on && !shelved, true, p))
+					ui.Text(c, t.label).FontSize(11.5).FontWeight(500).TextColor(capTextColor(on && !shelved, true, p))
+				})
+				if !shelved && !alone && chip.Clicked() {
+					a.setPageAsk(t.page, id, !on)
+				}
+			}
+		})
+	})
+}
+
+// pageIcon is what a page's switch shows.
+func pageIcon(page tabPage) *ui.SVG {
+	switch page {
+	case tabsCharts:
+		return iconCharts
+	case tabsSonglists:
+		return iconPlaylist
+	}
+	return iconRadio
+}
+
 // sourceCaps builds a built-in source's switches, under its name: what is
 // asked of it, each with what it does and whether there is anything behind
-// it.
+// it. The label at their head is what lines them up with the row of pages
+// under them, which says 页面: two rows of chips read as a small table,
+// rather than one long line that wraps.
 func (a *app) sourceCaps(c *ui.Context, id, name string) {
 	p := a.pal
-	ui.Row(c).Gap(6).Margin(2, 0, 0, 0).Wrap().Children(func() {
-		for _, cap := range source.Capabilities {
-			cap := cap
-			has := a.reg.Has(id, cap)
-			on := a.reg.Asked(id, cap)
-			chip := ui.ButtonBase(c.Key("cap-" + id + "-" + strconv.Itoa(int(cap)))).Height(26).PaddingX(10).Gap(6).Radius(999).
-				AlignItems(ui.Center).FocusRing(false).Label(CapLabel(name, cap))
-			switch {
-			case !has:
-				chip.Disabled(true).Opacity(0.35)
-			case on:
-				chip.Background(p.accent.Alpha(0.14)).TextColor(p.text)
-			default:
-				chip.Background(p.hover).TextColor(p.muted)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(2, 0, 0, 0).Children(func() {
+		ui.Text(c, "功能").FontSize(10.5).TextColor(p.faint).Width(24).SingleLine()
+		ui.Row(c).Gap(6).Wrap().Grow(1).Children(func() {
+			for _, cap := range source.Capabilities {
+				cap := cap
+				has := a.reg.Has(id, cap)
+				on := a.reg.Asked(id, cap)
+				chip := ui.ButtonBase(c.Key("cap-" + id + "-" + strconv.Itoa(int(cap)))).Height(26).PaddingX(10).Gap(6).Radius(999).
+					AlignItems(ui.Center).FocusRing(false).Label(CapLabel(name, cap))
+				switch {
+				case !has:
+					chip.Disabled(true).Opacity(0.35)
+				case on:
+					chip.Background(p.accent.Alpha(0.14)).TextColor(p.text)
+				default:
+					chip.Background(p.hover).TextColor(p.muted)
+				}
+				if has && chip.Hovered() {
+					chip.Background(p.press)
+				}
+				chip.Children(func() {
+					ui.Icon(c, capIcon(cap)).Size(11, 11).TextColor(capColor(on, has, p))
+					ui.Text(c, source.CapName(cap)).FontSize(11.5).FontWeight(500).
+						TextColor(capTextColor(on, has, p))
+				})
+				if has && chip.Clicked() {
+					a.turnSourceCap(id, cap, !on)
+				}
 			}
-			if has && chip.Hovered() {
-				chip.Background(p.press)
-			}
-			chip.Children(func() {
-				ui.Icon(c, capIcon(cap)).Size(11, 11).TextColor(capColor(on, has, p))
-				ui.Text(c, source.CapName(cap)).FontSize(11.5).FontWeight(500).
-					TextColor(capTextColor(on, has, p))
-			})
-			if has && chip.Clicked() {
-				a.turnSourceCap(id, cap, !on)
-			}
-		}
+		})
 	})
 }
 
@@ -345,37 +482,51 @@ func (a *app) builtinSourceInfo(id string) (name, desc string) {
 	return name, "内置源"
 }
 
-// accountDescription says who listens, for the NetEase row: what the
-// music source's account gives.
-func (a *app) accountDescription() string {
-	if a.profile == nil {
+// accountDescription says who listens to a source, and what signing in to it
+// gives.
+func (a *app) accountDescription(src string) string {
+	prof := a.accountProfile(src)
+	if prof == nil {
+		switch src {
+		case music.SourceQQ:
+			return "未登录 · 登录后可用每日推荐、我的歌单与喜欢"
+		}
 		return "未登录 · 登录后可按会员身份播放会员歌曲，每日推荐与歌单也依你的口味生成"
 	}
-	return "已登录 · " + a.profile.Nickname
+	who := "已登录 · " + prof.Nickname
+	if prof.VIP != "" {
+		who += " · " + prof.VIP
+	}
+	return who
 }
 
-// accountSettings is the group of NetEase's account: the one account the
-// app has, and the only place it is signed in to. It was at the foot of the
-// sidebar, where it was a button the listener did not ask for; the sidebar
-// keeps none of it.
-func (a *app) accountSettings(group func(string, func()), row func(string, string, func()), c *ui.Context) {
-	group("网易云音乐账号", func() {
-		row("登录状态", a.accountDescription(), func() {
-			if a.profile == nil {
-				if ui.PrimaryButton(c.Key("source-login"), "扫码登录").Clicked() {
-					a.showMain()
-					a.openLogin()
+// accountRow is a source's account, under the source's own row: who is
+// signed in, the way in, and the way out. Each source has one account, and
+// each is signed in on its own.
+//
+// It was a group of its own when NetEase was the only source that had one;
+// with more sources, an account belongs where its source is.
+func (a *app) accountRow(c *ui.Context, src string) {
+	p := a.pal
+	prof := a.accountProfile(src)
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Margin(2, 0, 0, 0).Children(func() {
+		if prof != nil {
+			a.avatar(c, prof.AvatarURL, 24, p.press)
+		}
+		ui.Text(c, a.accountDescription(src)).FontSize(11.5).TextColor(p.muted).Grow(1).LineHeight(1.4)
+		if prof == nil {
+			if ui.Button(c.Key("source-login-"+src), "扫码登录").Clicked() {
+				a.showMain()
+				a.openLoginTo(src, "")
+				if a.win != nil {
 					a.win.Invalidate()
 				}
-				return
 			}
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				a.avatar(c, a.profile.AvatarURL, 26, a.pal.press)
-				if ui.Button(c.Key("source-logout"), "退出登录").Clicked() {
-					a.signOut()
-				}
-			})
-		})
+			return
+		}
+		if ui.Button(c.Key("source-logout-"+src), "退出登录").Clicked() {
+			a.signOut(src)
+		}
 	})
 }
 
@@ -538,7 +689,7 @@ func (a *app) setSourceCap(id string, cap source.Cap, on bool) bool {
 		a.settings.LibrariesOff = setOff(a.settings.LibrariesOff, id, !on)
 		a.square = nil
 		a.rebuildChain()
-		if neteaseOnly(a.route.page) && !a.searchesOn(music.SourceNetease) {
+		if a.noSourceProvides(a.route.page) {
 			a.open(route{page: pageSonglists})
 		}
 	case source.CapStream:

@@ -706,6 +706,12 @@ func (p *Player) fetchCover(t netease.Track) ([]byte, error) {
 	return nil, errors.New("player: no cover")
 }
 
+// skipAhead is how many songs in a row the player skips by itself before it
+// stops and says why. One skip is a song the listener may not have wanted;
+// a run of them is a source that has stopped playing this list, and carrying
+// on finds only the rest of it failing.
+const skipAhead = 2
+
 // load plays the track at order[at], skipping those that cannot play.
 func (p *Player) load(at int) {
 	p.loadSkipping(at, 0, true, 0)
@@ -796,8 +802,14 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 					// were tried for it: say so, as Music does.
 					p.err = "这首歌需要 VIP，其它来源也没有找到"
 				}
-				// Skip what cannot play, unless nothing in the queue can.
-				if skipped+1 < len(p.order) {
+				// Skip what cannot play, unless nothing in the queue can, or
+				// the queue has already been tried: a source that cannot
+				// play this list would otherwise walk the player through
+				// every song of it, one failure each, and the listener who
+				// pressed play would hear neither the songs nor why. Two in
+				// a row says it, and the song that failed stays up with its
+				// reason.
+				if skipped+1 < len(p.order) && skipped < skipAhead {
 					next := at + 1
 					if next >= len(p.order) {
 						next = 0
@@ -899,9 +911,12 @@ func openFile(path string, t netease.Track) (*netease.Stream, stream, error) {
 //
 // A link that names an address which does not open gives way to the next:
 // a script whose upstream is down answers with a URL that is a 404, and
-// that is its own failing, not the song's. Only the links that come back
-// saying they have no address at all end the song's chances, as they did
-// before.
+// that is its own failing, not the song's. When no link does, the song is
+// asked for again one level down, and so on to the foot of the ladder: a
+// source may have a hires address that no longer opens and a 320k one that
+// does, and hearing it at 320k beats not hearing it. Only links that come
+// back saying they have no address at all, and a source that never answers,
+// end the song's chances where they are.
 func (p *Player) open(t netease.Track, level string, ahead bool) (*netease.Stream, stream, string, error) {
 	// A downloaded song plays from its own file, which the listener asked
 	// for by name: it is the song as they chose it, at the level they
@@ -943,49 +958,94 @@ func (p *Player) open(t netease.Track, level string, ahead bool) (*netease.Strea
 	// skip is the link whose address did not open: the next try leaves it
 	// out. It stays "" until one fails, so the common case is one look.
 	var skip string
-	var firstErr error
+	// openErr is the first address that named a song and opened as none: it
+	// is what the listener is told if nothing else works, since a source
+	// that had an address and gave a page says more than one that had none.
+	// missErr is the sources' having no address at all, which alongside
+	// openErr makes the pair worth saying.
+	var openErr, missErr error
 	for {
 		info, served, link, err := p.resolveLink(t, level, skip)
-		if err != nil {
-			if firstErr != nil {
-				// A source named an address that was no song, and no other
-				// source has it: say both, as only the pair explains it.
-				return nil, nil, "", fmt.Errorf("音源给出的地址无法播放（%v），其它来源也没有这首歌", firstErr)
-			}
-			return nil, nil, "", err
-		}
-		// What a source other than the song's own gives is not kept: the
-		// cache's name is the song's own, and a stream found elsewhere may
-		// be a different recording. Either way the song comes into a file
-		// rather than into memory, and the one the cache keeps comes into
-		// the cache's own.
-		var dl *download
-		switch {
-		case served == t.Src() && name != "":
-			dl = p.Cache.download(name, info)
-		case ahead:
-			// Waiting for its turn behind a song that plays: in a file,
-			// which goes when the song does.
-			dl = p.Cache.downloadAhead(info)
-		default:
-			dl = p.Cache.download("", info)
-		}
-		s, err := openStream(dl, t.Duration)
 		if err == nil {
-			return info, s, served, nil
+			// What a source other than the song's own gives is not kept: the
+			// cache's name is the song's own, and a stream found elsewhere may
+			// be a different recording. Either way the song comes into a file
+			// rather than into memory, and the one the cache keeps comes into
+			// the cache's own.
+			var dl *download
+			switch {
+			case served == t.Src() && name != "":
+				dl = p.Cache.download(name, info)
+			case ahead:
+				// Waiting for its turn behind a song that plays: in a file,
+				// which goes when the song does.
+				dl = p.Cache.downloadAhead(info)
+			default:
+				dl = p.Cache.download("", info)
+			}
+			s, err := openStream(dl, t.Duration)
+			if err == nil {
+				return info, s, served, nil
+			}
+			dl.Close()
+			if openErr == nil {
+				openErr = err
+			}
+			// The address this link named is no song: ask the next link that
+			// has the song. Without a link to leave out, as in a test with
+			// Resolve alone, there is nothing more to ask.
+			if link != "" && link != skip {
+				skip = link
+				continue
+			}
+		} else if missErr == nil {
+			missErr = err
 		}
-		dl.Close()
-		if firstErr == nil {
-			firstErr = err
+		// Every link that named an address at this level opened as no song.
+		// The level below is asked before the song is given up on: a source
+		// may name a hires address its upstream no longer serves while the
+		// same song's 320k opens, and a song heard at 320k is better than one
+		// not heard. It costs a second look only on this path, where nothing
+		// has played anyway.
+		//
+		// The walk carries on past levels a source says it has nothing at:
+		// the address that failed was at one level, and the song is heard at
+		// another. A source that never answered is not walked, though: each
+		// level costs firstByte of the listener's time, and one that says
+		// nothing at one address says nothing at the next.
+		if openErr != nil {
+			if !errors.Is(openErr, errCold) {
+				if lower, ok := levelBelow(level); ok {
+					level, skip = lower, ""
+					continue
+				}
+			}
+			// A page, or bytes in a format the player does not decode, is the
+			// song's own reason and says enough alone; so is a source that
+			// never answered. Both are what the listener needs to hear.
+			if errors.Is(openErr, ErrUnsupportedFormat) || errors.Is(openErr, ErrNotAudio) || errors.Is(openErr, errCold) {
+				return nil, nil, "", openErr
+			}
+			// A source named an address that was no song, and no other
+			// source has it: say both, as only the pair explains it.
+			return nil, nil, "", fmt.Errorf("音源给出的地址无法播放（%v），其它来源也没有这首歌", openErr)
 		}
-		// The address this link named is no song: ask the next link that
-		// has the song. Without a link to leave out, as in a test with
-		// Resolve alone, there is nothing more to ask.
-		if link == "" || link == skip {
-			return nil, nil, "", firstErr
-		}
-		skip = link
+		// None named an address: that is the song's reason, whether or not
+		// a level below was asked as well.
+		return nil, nil, "", missErr
 	}
+}
+
+// levelBelow returns the stream level under level, and whether there is one.
+// A level the app does not know — a script's own — has none: nothing says
+// what it would be lower than.
+func levelBelow(level string) (string, bool) {
+	for i, l := range music.Levels {
+		if l == level && i > 0 {
+			return music.Levels[i-1], true
+		}
+	}
+	return "", false
 }
 
 // resolveLink asks where the track streams from, leaving out skip, and

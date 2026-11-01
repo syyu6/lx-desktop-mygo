@@ -7,11 +7,14 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
+	"netease-music-mygo/internal/source"
 )
 
 // Radios play on without end: the personal FM, in one of its modes, as
-// "fm:<mode>", and the heart mode of the liked songs, as "heart".
+// "fm:<source>:<mode>" — NetEase's without the source, as "fm:<mode>" —
+// and the heart mode of the liked songs, as "heart".
 
 const heartRadio = "heart"
 
@@ -21,17 +24,44 @@ var fmModes = []struct{ mode, label string }{
 	{netease.FMExplore, "探索"},
 }
 
-func fmRadio(mode string) string { return "fm:" + mode }
+// fmRadio names the FM of a source in a mode. NetEase's keep the name they
+// had, without the source, and another source's say which it is: two
+// sources may name a mode alike and play different songs.
+func fmRadio(src, mode string) string {
+	if src == "" || src == music.SourceNetease {
+		return "fm:" + mode
+	}
+	return "fm:" + src + ":" + mode
+}
+
+// fmParts reads a radio's name as the source and mode it was started with.
+func fmParts(name string) (src, mode string, ok bool) {
+	rest, found := strings.CutPrefix(name, "fm:")
+	if !found {
+		return "", "", false
+	}
+	if s, m, found := strings.Cut(rest, ":"); found {
+		return s, m, true
+	}
+	return "", rest, true
+}
 
 // radioLabel names a radio as the listener knows it.
 func radioLabel(name string) string {
 	if name == heartRadio {
 		return "心动模式"
 	}
+	src, mode, ok := fmParts(name)
+	if !ok {
+		return "私人 FM"
+	}
 	for _, m := range fmModes {
-		if name == fmRadio(m.mode) {
+		if mode == m.mode {
 			return "私人 FM · " + m.label
 		}
+	}
+	if src != "" && src != music.SourceNetease {
+		return "私人 FM · " + src
 	}
 	return "私人 FM"
 }
@@ -62,11 +92,9 @@ func (a *app) likedPlaylist() int64 {
 func (a *app) radioFeed(name string) func(got func([]netease.Track)) {
 	return func(got func([]netease.Track)) {
 		var fetch func() ([]netease.Track, error)
-		switch {
-		case strings.HasPrefix(name, "fm:"):
-			mode := strings.TrimPrefix(name, "fm:")
-			fetch = func() ([]netease.Track, error) { return netease.PersonalFM(mode) }
-		case name == heartRadio:
+		if src, mode, ok := fmParts(name); ok {
+			fetch = a.fmFetcher(src, mode)
+		} else if name == heartRadio {
 			// More like the last song queued, from the song it began with.
 			q, pid := a.pl.Queue(), a.likedPlaylist()
 			if len(q) == 0 || pid == 0 {
@@ -75,7 +103,8 @@ func (a *app) radioFeed(name string) func(got func([]netease.Track)) {
 			}
 			start, last := q[0].ID, q[len(q)-1].ID
 			fetch = func() ([]netease.Track, error) { return netease.HeartMode(last, start, pid) }
-		default:
+		}
+		if fetch == nil {
 			got(nil)
 			return
 		}
@@ -95,9 +124,33 @@ func (a *app) radioFeed(name string) func(got func([]netease.Track)) {
 	}
 }
 
+// fmFetcher returns what gives a source's station its next songs, in a
+// mode. NetEase's is the app's own call, which a test replaces; a
+// service's is asked through the registry.
+func (a *app) fmFetcher(src, mode string) func() ([]netease.Track, error) {
+	if src == "" || src == music.SourceNetease {
+		return func() ([]netease.Track, error) { return netease.PersonalFM(mode) }
+	}
+	p := a.providerOf(src)
+	if p == nil {
+		return nil
+	}
+	r, ok := any(p).(source.Radio)
+	if !ok {
+		return nil
+	}
+	return func() ([]netease.Track, error) { return r.Radio(mode) }
+}
+
 // playFM plays the personal FM in the mode chosen, or goes on playing it.
 func (a *app) playFM() {
-	name := fmRadio(fmModes[a.fmMode].mode)
+	src := a.fmSource()
+	modes := a.fmModesOf(src)
+	mode := ""
+	if len(modes) > 0 {
+		mode = modes[min(a.fmMode, len(modes)-1)].ID
+	}
+	name := fmRadio(src, mode)
 	if a.pl.Radio() == name {
 		if !a.pl.Playing() {
 			a.pl.TogglePlay()
@@ -134,6 +187,10 @@ func (a *app) exitRadio() {
 }
 
 // trashFM skips the song playing on the FM, which plays it no more.
+//
+// "No more" is NetEase's to keep: a service's station is skipped and told
+// nothing, since neither source has a way to say it, and to say so would be
+// to lie about what the next song is picked from.
 func (a *app) trashFM() {
 	tr := a.pl.Current()
 	if tr == nil {
@@ -141,7 +198,9 @@ func (a *app) trashFM() {
 	}
 	id := tr.ID
 	a.pl.Next()
-	go netease.FMTrash(id)
+	if src, _, _ := fmParts(a.pl.Radio()); src == "" || src == music.SourceNetease {
+		go netease.FMTrash(id)
+	}
 }
 
 // startHeartMode plays songs like one the listener likes: the one playing,
@@ -163,7 +222,8 @@ func (a *app) startHeartMode() {
 	}
 	var seed *netease.Track
 	fromPlaying := false
-	if cur := a.pl.Current(); cur != nil && a.liked[cur.ID] {
+	// The heart radio is NetEase's: it plays from the songs it likes.
+	if cur := a.pl.Current(); cur != nil && cur.Src() == music.SourceNetease && a.isLiked(cur) {
 		s := *cur
 		seed, fromPlaying = &s, true
 	}
@@ -204,47 +264,97 @@ func (a *app) startHeartMode() {
 	}()
 }
 
+// fmSource is the source the FM page plays from: the one the home pages
+// show while it has a station, else the first that has one.
+//
+// A registry that is not there, or none with a station, is NetEase's, as
+// the page was before there were others.
+func (a *app) fmSource() string {
+	ids, at := sourcesWith[source.Radio](a, homeTabPage(a.route.page), a.homeSource())
+	if len(ids) == 0 {
+		return music.SourceNetease
+	}
+	return ids[at]
+}
+
+// fmModesOf are the modes a source's station plays in: NetEase's three,
+// and a source's own as it says. A source with none plays one it picks
+// alone, and the page offers no mode to choose.
+func (a *app) fmModesOf(src string) []music.RadioMode {
+	if src == "" || src == music.SourceNetease {
+		var out []music.RadioMode
+		for _, m := range fmModes {
+			out = append(out, music.RadioMode{ID: m.mode, Name: m.label})
+		}
+		return out
+	}
+	if p := a.providerOf(src); p != nil {
+		if r, ok := any(p).(source.Radio); ok {
+			return r.RadioModes()
+		}
+	}
+	return nil
+}
+
 // fmPage is the personal FM: what it plays, large, over its cover's
 // colors, with the FM's own controls, and heart mode below.
 func (a *app) fmPage(c *ui.Context) {
 	p := a.pal
+	src := a.fmSource()
+	modes := a.fmModesOf(src)
 	top, bottom := a.insets(c)
 	ui.Scroll(c.Key("fm")).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).Children(func() {
 		a.startMark(c)
 		defer a.endMark(c)
 		// The mode the FM plays in, if it plays.
-		for i, m := range fmModes {
-			if a.pl.Radio() == fmRadio(m.mode) {
+		for i, m := range modes {
+			if a.pl.Radio() == fmRadio(src, m.ID) {
 				a.fmMode = i
 			}
 		}
-		ui.Row(c).AlignItems(ui.End).Children(func() {
-			ui.Box(c).Grow(1).Children(func() { a.heading(c, "私人 FM", "无尽推荐") })
-			mode := a.fmMode
-			ui.Box(c).Margin(0, 0, 22, 0).Children(func() {
-				labels := make([]string, len(fmModes))
-				for i, m := range fmModes {
-					labels[i] = m.label
+		// The name stands alone, the source and the mode below it: the
+		// heading names the page, and what it plays is a setting of it,
+		// rather than three things sharing one line that the narrowest
+		// window cramps.
+		a.heading(c, "私人 FM", "无尽推荐")
+		ui.Row(c).AlignItems(ui.Center).Gap(16).Margin(0, 0, 18, 0).Children(func() {
+			a.homeSourceTabsIn(c)
+			// The tabs keep their own bottom margin, which the row would
+			// otherwise double: the row is where the mode goes beside them.
+			ui.Box(c).Grow(1)
+			if len(modes) < 2 {
+				// A station with one mode has nothing to choose: the page
+				// says which it plays instead of offering a control that
+				// does nothing.
+				return
+			}
+			mode := min(a.fmMode, len(modes)-1)
+			labels := make([]string, len(modes))
+			for i, m := range modes {
+				labels[i] = m.Name
+			}
+			if segmented(c.Key("fm-mode"), &mode, labels...) {
+				a.fmMode = mode
+				// Playing the FM, it changes to the mode at once.
+				if _, _, ok := fmParts(a.pl.Radio()); ok {
+					a.playFM()
 				}
-				if segmented(c.Key("fm-mode"), &mode, labels...) {
-					a.fmMode = mode
-					// Playing the FM, it changes to the mode at once.
-					if strings.HasPrefix(a.pl.Radio(), "fm:") {
-						a.playFM()
-					}
-				}
-			})
+			}
 		})
-		a.fmCard(c)
-		a.section(c, "心动模式")
-		a.heartCard(c, p)
+		a.fmCard(c, src)
+		// Heart mode plays the songs NetEase's account likes: another
+		// source's station has none to play from.
+		if src == "" || src == music.SourceNetease {
+			a.section(c, "心动模式")
+			a.heartCard(c, p)
+		}
 	})
 }
 
 // fmCard shows the song the FM plays, or how to start it.
-func (a *app) fmCard(c *ui.Context) {
+func (a *app) fmCard(c *ui.Context, src string) {
 	pl := a.pl
-	onFM := strings.HasPrefix(pl.Radio(), "fm:")
+	_, _, onFM := fmParts(pl.Radio())
 	var tr *netease.Track
 	if onFM {
 		tr = pl.Current()
@@ -270,7 +380,10 @@ func (a *app) fmCard(c *ui.Context) {
 		ui.Row(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Padding(36, 40).Gap(40).AlignItems(ui.Center).Children(func() {
 			a.fmCovers(c, tr)
 			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
-				label := "私人 FM · " + fmModes[a.fmMode].label
+				label := "私人 FM"
+				if modes := a.fmModesOf(src); len(modes) > 0 {
+					label += " · " + modes[min(a.fmMode, len(modes)-1)].Name
+				}
 				if onFM {
 					label = radioLabel(pl.Radio())
 				}

@@ -147,6 +147,13 @@ func (a *app) view(c *ui.Context) {
 	c.SetTheme(&t)
 	a.setWindowColor(p)
 
+	// The cache moving to another folder takes the window until it ends:
+	// the page under it would draw songs whose files are being moved.
+	if a.cacheMoving {
+		a.cacheMigrationView(c)
+		return
+	}
+
 	// The fold a click asks for takes effect on the next frame: this one
 	// is built as the fold was when it began, all of it together.
 	a.railFrame = a.sideRail
@@ -335,9 +342,8 @@ func (a *app) show(r route) {
 
 // load loads what the page of r shows, unless it has.
 func (a *app) load(r route) {
-	// With NetEase's catalogue off, its pages are not asked for what they
-	// would show.
-	if neteaseOnly(r.page) && !a.searchesOn(music.SourceNetease) {
+	// A page no source provides is not asked for what it would show.
+	if a.noSourceProvides(r.page) {
 		return
 	}
 	switch r.page {
@@ -345,20 +351,29 @@ func (a *app) load(r route) {
 		a.freshenHome()
 	case pagePlaylist:
 		a.loadPlaylist(r.src, r.id, false)
+		// A liked playlist's albums are asked for when its second tab shows,
+		// rather than when the page opens: most openings are its songs.
+		if r.tab == likedAlbums {
+			if pl := a.playlists[playlistKey(r.src, r.id)]; pl != nil && pl.SpecialType == 5 {
+				a.loadCollected(pl.Src(), false)
+			}
+		}
 	case pageSearch:
 		a.loadSearch(r, false)
 	case pageArtist:
-		a.loadArtist(r.id)
+		a.loadArtist(r.src, r.id)
 	case pageAlbum:
-		a.loadAlbum(r.id)
+		a.loadAlbum(r.src, r.id)
 	case pageUser:
-		a.loadUser(r.id)
+		a.loadUser(r.src, r.id)
 	case pagePodcast:
 		a.loadPodcast(r.id)
 	case pagePodcasts:
 		a.loadPodcastTab()
 	case pageSonglists:
 		a.loadSquare()
+	case pagePurchased:
+		a.loadPurchased(a.route.tab, false)
 	}
 }
 
@@ -435,6 +450,11 @@ func (a *app) sidebar(c *ui.Context) {
 			// its entry is gone rather than leading to an empty page.
 			if a.downloadEnabled() {
 				a.navItem(c, iconDownload, "下载管理", route{page: pageDownloads})
+			}
+			// Purchased music, while a source that sells is signed in: with
+			// none, the page would be one the listener cannot fill.
+			if _, ok := a.purchaseSource(); ok {
+				a.navItem(c, iconPurchased, "已购音乐", route{page: pagePurchased})
 			}
 			// The playlists are lists of names: folded, the rail keeps the
 			// pages, and they come back with it.
@@ -733,15 +753,54 @@ func (a *app) pageTop(c *ui.Context) {
 	})
 }
 
-// neteaseOnly reports whether a page shows what only NetEase has: the
-// day's songs, the charts, the podcasts, and the artists, albums and users
-// searched among its catalogue.
-func neteaseOnly(page pageKind) bool {
+// noSourceProvides reports whether a page has lost every source that could
+// show it, so that it says so rather than sit empty: the home, daily,
+// chart, station, artist, album and listener pages have several sources
+// between them, and the podcasts are NetEase's alone.
+func (a *app) noSourceProvides(page pageKind) bool {
+	// A registry that is not there is the app as a test builds it, or one
+	// whose sources all failed to start: its pages are NetEase's, as they
+	// were before there were others.
+	if a.reg == nil {
+		return false
+	}
 	switch page {
-	case pageHome, pageDaily, pageCharts, pageFM, pageArtist, pageAlbum, pageUser, pagePodcast, pagePodcasts:
-		return true
+	case pageHome:
+		ids, _ := sourcesWith[source.FeaturedSource](a, homeTabPage(page), a.homePick)
+		return len(ids) == 0 && !a.searchesOn(music.SourceNetease)
+	case pageDaily:
+		return !a.anyProvides[source.Daily]()
+	case pageCharts:
+		return !a.anyProvides[source.Charted]()
+	case pageFM:
+		return !a.anyProvides[source.Radio]()
+	case pageArtist:
+		return !a.anyProvides[source.ArtistPages]()
+	case pageAlbum:
+		return !a.anyProvides[source.AlbumPages]()
+	case pageUser:
+		return !a.anyProvides[source.UserPages]()
+	case pagePodcast, pagePodcasts:
+		return !a.searchesOn(music.SourceNetease)
 	}
 	return false
+}
+
+// anyProvides reports whether any source the listener searches has what a
+// page of a kind is made of.
+func (a *app) anyProvides[T any]() bool {
+	ids, _ := sourcesWith[T](a, "", "")
+	return len(ids) > 0
+}
+
+// noSourceMessage says why a page has nothing to show: the source that
+// alone had it was turned off, and the settings say which.
+func (a *app) noSourceMessage() string {
+	switch a.route.page {
+	case pagePodcast, pagePodcasts:
+		return "网易云音乐的曲库已在设置中关闭，播客由它提供"
+	}
+	return "这个页面由内置源提供，它们都在设置中关闭了"
 }
 
 func (a *app) content(c *ui.Context) {
@@ -752,11 +811,11 @@ func (a *app) content(c *ui.Context) {
 	}
 	// Pages mark where their content is, as they scroll.
 	a.underTop, a.underBottom = false, false
-	// With NetEase off, its pages have nothing to show, and say so rather
+	// A page no source provides has nothing to show, and says so rather
 	// than sit empty: the sources the listener asks are in 歌单 and the
 	// search.
-	if neteaseOnly(a.route.page) && !a.searchesOn(music.SourceNetease) {
-		a.centered(c, "网易云音乐的曲库已在设置中关闭，这个页面由它提供", func() {
+	if a.noSourceProvides(a.route.page) {
+		a.centered(c, a.noSourceMessage(), func() {
 			a.open(route{page: pageSonglists})
 		})
 		return
@@ -796,6 +855,8 @@ func (a *app) content(c *ui.Context) {
 		a.songlistsPage(c)
 	case pageDownloads:
 		a.downloadsPage(c)
+	case pagePurchased:
+		a.purchasedPage(c)
 	}
 }
 
@@ -813,46 +874,7 @@ func (a *app) centered(c *ui.Context, err string, retry func()) {
 
 // Loading what the pages show.
 
-func (a *app) loadHome() {
-	if !a.searchesOn(music.SourceNetease) {
-		// Its pages are NetEase's alone: with its catalogue off there is
-		// nothing to ask it for, and it is not asked.
-		return
-	}
-	a.homeLoading, a.homeErr = true, ""
-	signedIn := a.profile != nil
-	at := time.Now()
-	go func() {
-		featured, err1 := netease.FeaturedPlaylists(30)
-		charts, err2 := netease.Charts()
-		daily, _ := netease.DailySongs()
-		var rec []netease.Playlist
-		if signedIn {
-			rec, _ = netease.RecommendedPlaylists()
-		}
-		a.post(func() {
-			a.homeLoading = false
-			if err1 != nil && err2 != nil {
-				// Loading the new day's again, what shows stays, to try
-				// once more.
-				if len(a.featured) == 0 && len(a.charts) == 0 {
-					a.homeErr = "无法连接网易云音乐，请检查网络"
-				}
-				return
-			}
-			a.featured, a.charts, a.daily, a.recPlaylists = featured, charts, daily, rec
-			a.homeAt = at
-		})
-	}()
-}
-
-// freshenHome loads the home page again once NetEase has picked the day's
-// songs anew since it last did: the app may stay open overnight.
-func (a *app) freshenHome() {
-	if !a.homeLoading && !a.homeAt.IsZero() && dailyRenewed(a.homeAt, time.Now()) {
-		a.loadHome()
-	}
-}
+// The home page and its sections are loaded per source, in ui_home.go.
 
 // beijing is NetEase's time, without daylight saving.
 var beijing = time.FixedZone("CST", 8*60*60)

@@ -4,6 +4,8 @@ import (
 	"runtime"
 
 	"github.com/egoist/mygo"
+
+	"netease-music-mygo/internal/music"
 )
 
 // setMenu gives the app its menu bar, in Chinese and named as the app
@@ -56,11 +58,12 @@ func (a *app) setMenu() {
 				}
 				a.open(route{page: pageUser, id: a.profile.UserID})
 			})},
-			{Label: "登录网易云音乐…", Click: run(func() {
+			mygo.Separator(),
+			{Label: "登录…", Click: run(func() {
 				a.showMain()
-				a.openLogin()
+				a.openLoginTo(music.SourceNetease, "")
 			})},
-			{Label: "退出登录", Click: run(a.signOut)},
+			{Label: "退出登录", Click: run(func() { a.signOut(music.SourceNetease) })},
 		}},
 		{Label: "编辑", Submenu: []*mygo.MenuItem{
 			{Role: mygo.RoleUndo, Label: "撤销"},

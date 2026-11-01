@@ -192,7 +192,7 @@ func TestSourcesWithAsksByInterface(t *testing.T) {
 	a.settings = defaultSettings()
 	a.reg = source.NewRegistry(netease.Provider{}, squareOnly, both)
 
-	ids, at := sourcesWith[source.Square](a, "")
+	ids, at := sourcesWith[source.Square](a, "", "")
 	if len(ids) != 3 {
 		t.Fatalf("squares %v, want NetEase, the fake and other", ids)
 	}
@@ -202,7 +202,7 @@ func TestSourcesWithAsksByInterface(t *testing.T) {
 
 	// The fake has a square and no charts; NetEase has both. A page built
 	// on charts offers NetEase alone.
-	ids, at = sourcesWith[source.Charted](a, "")
+	ids, at = sourcesWith[source.Charted](a, "", "")
 	if len(ids) != 1 || ids[0] != music.SourceNetease {
 		t.Errorf("charts on %v, want NetEase's alone", ids)
 	}
@@ -212,7 +212,7 @@ func TestSourcesWithAsksByInterface(t *testing.T) {
 
 	// A source turned off is not offered, whatever it has.
 	a.reg.SetSearched("other", false)
-	ids, _ = sourcesWith[source.Square](a, "")
+	ids, _ = sourcesWith[source.Square](a, "", "")
 	for _, id := range ids {
 		if id == "other" {
 			t.Errorf("offered other, which the listener turned off: %v", ids)
@@ -308,5 +308,52 @@ func TestSquareTagsShowTheirNames(t *testing.T) {
 	tt.Frame()
 	if r, _ := tt.Find("华语"); r.W < 40 {
 		t.Errorf("the chosen chip is %.0f wide: it draws no text", r.W)
+	}
+}
+
+// A source's square can name a category as the page names its own — QQ
+// calls one 全部 — and can number two of them alike: the chips still stand
+// apart, as chips of one key would share one state and a click on one would
+// light another.
+func TestSquareTagChipsStandApart(t *testing.T) {
+	f := &fakeSquare{
+		tags:  []music.Tag{{Name: "全部"}, {Name: "华语"}, {Name: "欧美"}},
+		lists: []music.Playlist{{Source: "fake", ID: 1, Name: "老歌"}},
+	}
+	a := squareApp(f)
+	a.route = route{page: pageSonglists}
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	a.tagsArrived(a.square, f, mustTags(t, f), nil)
+	a.squareArrived(a.square, mustLists(t, f, ""), nil, false)
+	// The Tester panics for two chips of one key, so building the page is
+	// the assertion; a category named 全部 must not call off the page's own.
+	// Each chip draws its name twice, as its label and its text.
+	tt.Frame()
+	if n := textCount(tt, "全部"); n != 4 {
+		t.Errorf("the page shows %d items called 全部, want the page's chip and the source's", n)
+	}
+}
+
+// A page of the square that lists a playlist the last one listed appends it
+// no more: the two cards would share one key, and the pointer over one would
+// move the other.
+func TestSquareDoesNotRepeatAPlaylist(t *testing.T) {
+	f := &fakeSquare{lists: []music.Playlist{
+		{Source: "fake", ID: 1}, {Source: "fake", ID: 2}, {Source: "fake", ID: 3},
+	}}
+	a := squareApp(f)
+	a.loadSquare()
+	s := a.square
+	a.tagsArrived(s, f, nil, nil)
+	a.squareArrived(s, []music.Playlist{{Source: "fake", ID: 1}, {Source: "fake", ID: 2}}, nil, false)
+	a.squareArrived(s, []music.Playlist{{Source: "fake", ID: 2}, {Source: "fake", ID: 3}}, nil, true)
+	if len(s.lists) != 3 {
+		t.Fatalf("the square lists %d playlists, want 3 with no repeat: %+v", len(s.lists), s.lists)
+	}
+	for i := range s.lists {
+		if s.lists[i].ID != int64(i+1) {
+			t.Errorf("playlist %d is %d", i, s.lists[i].ID)
+		}
 	}
 }

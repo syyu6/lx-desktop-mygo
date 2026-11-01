@@ -215,6 +215,7 @@ func (a *app) settingsView(c *ui.Context) {
 							a.clearCache()
 						}
 					})
+					a.cacheDirRow(c)
 				})
 				if a.updates {
 					group("更新", func() {

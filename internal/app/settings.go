@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/egoist/mygo"
 )
@@ -73,6 +74,15 @@ type settings struct {
 	// CacheMB is how many megabytes the songs kept on disk may take; 0
 	// keeps none.
 	CacheMB int `json:"cacheMB"`
+	// CacheDir is the folder the songs kept are kept in, empty for the
+	// app's cache directory: the listener's choice, for a disk with more
+	// room than the system's.
+	CacheDir string `json:"cacheDir,omitempty"`
+	// PendingCacheDir is the folder the cache is moving to, kept until the
+	// move has finished: the setting is written first, so that a migration
+	// the app quits in the middle of is taken up again at the next start
+	// rather than the old folder being asked for good.
+	PendingCacheDir *string `json:"pendingCacheDir,omitempty"`
 	// SearchHistory keeps submitted keywords, most recent first.
 	SearchHistory []string `json:"searchHistory,omitempty"`
 	// ScriptOrder names the imported source scripts, the first to be asked
@@ -99,6 +109,16 @@ type settings struct {
 	// asked for words.
 	LyricsOff   []string `json:"lyricsOff,omitempty"`
 	CommentsOff []string `json:"commentsOff,omitempty"`
+	// PagesAskOff names the sources a page is turned off for, as
+	// "<page>/<source>" (pageTabs): a source so turned off is not offered in
+	// that page's row of tabs, and when the page has only it left the row
+	// goes too. It sits with the source's own switches because it is one:
+	// "QQ Music in 推荐" is a thing about QQ Music.
+	PagesAskOff []string `json:"pagesAskOff,omitempty"`
+	// TabsOff named the pages whose row of source tabs the listener turned
+	// off, before the switch was the sources' own: a page turned off there
+	// is read once, for every source it offers (migrateSettings).
+	TabsOff []string `json:"tabsOff,omitempty"`
 	// SearchOff named the catalogues the listener did not search, before
 	// a source's songs were one switch: it is read once, for those it kept
 	// off (migrateSettings).
@@ -187,6 +207,25 @@ func (s *settings) migrate() {
 			s.Appearance = "cover"
 		}
 		s.Version = 1
+	}
+	// The page tabs were one switch a page, and are one a source in a page
+	// now: a page the listener turned off is turned off for every source it
+	// offered, which is what the one switch said, and the old list is
+	// dropped so that it cannot say it again after they turn one back on.
+	// The sources are in package app's constant, which this package cannot
+	// import: the three pages are named here, as they were written there.
+	if len(s.TabsOff) > 0 {
+		for _, page := range s.TabsOff {
+			for _, id := range []string{
+				"netease", "kuwo", "kugou", "qq", "migu",
+			} {
+				key := page + "/" + id
+				if !slices.Contains(s.PagesAskOff, key) {
+					s.PagesAskOff = append(s.PagesAskOff, key)
+				}
+			}
+		}
+		s.TabsOff = nil
 	}
 	if len(s.SearchOff) == 0 {
 		return

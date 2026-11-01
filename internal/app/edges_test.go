@@ -9,15 +9,15 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
 func TestScrollEdgesFollowContent(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
-	for i := range 40 {
-		a.featured = append(a.featured, netease.Playlist{ID: int64(i + 1), Name: "歌单"})
-	}
+	h := a.home(music.SourceNetease)
+	h.featured, h.at = featuredOf(40), time.Now()
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 	if a.underTop {
@@ -41,7 +41,8 @@ func TestScrollEdgesFollowContent(t *testing.T) {
 func TestShortPageHasNoEdges(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
-	a.featured = []netease.Playlist{{ID: 1, Name: "歌单"}}
+	h := a.home(music.SourceNetease)
+	h.featured, h.at = featuredOf(1), time.Now()
 	tt := ui.NewTester(a.view, 1200, 1400)
 	tt.Frame()
 	if a.underTop || a.underBottom {
@@ -57,9 +58,8 @@ func TestPopoverKeepsPlayerEdge(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.pl.Cue([]netease.Track{{ID: 1, Name: "一首歌", Duration: 200000}})
-	for i := range 40 {
-		a.featured = append(a.featured, netease.Playlist{ID: int64(i + 1), Name: "歌单"})
-	}
+	h := a.home(music.SourceNetease)
+	h.featured, h.at = featuredOf(40), time.Now()
 	tt := ui.NewTester(a.view, 1000, 700)
 	tt.Frame()
 	tt.Advance(time.Second)
@@ -85,5 +85,14 @@ func barPixels(tt *ui.Tester) *image.RGBA {
 		int((sidebarWidth+180)*s), img.Bounds().Dy())
 	out := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
 	draw.Draw(out, out.Bounds(), img, r.Min, draw.Src)
+	return out
+}
+
+// featuredOf is n playlists for a home page, marked as loaded.
+func featuredOf(n int) []netease.Playlist {
+	out := make([]netease.Playlist, n)
+	for i := range out {
+		out[i] = netease.Playlist{ID: int64(i + 1), Name: "歌单"}
+	}
 	return out
 }

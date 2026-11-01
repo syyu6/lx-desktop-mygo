@@ -9,14 +9,24 @@ import (
 	"netease-music-mygo/internal/player"
 )
 
-// newSongCache returns the cache of songs played, in the app's cache
-// directory, or nil without one.
-func newSongCache(mb int) *player.Cache {
-	dir, err := mygo.App.Path(mygo.PathCache)
-	if err != nil {
-		return nil
+// newSongCache returns the cache of songs played, in the folder the
+// listener chose or, while they chose none, the app's cache directory. It
+// returns nil without either.
+//
+// The folder is the listener's, so the cache keeps its songs in it as
+// <folder>/songs: the folder is theirs to hold other things in, and a
+// folder that has a folder of songs in it is plain to see.
+func newSongCache(s settings) *player.Cache {
+	dir := s.CacheDir
+	if dir == "" {
+		app, err := mygo.App.Path(mygo.PathCache)
+		if err != nil {
+			return nil
+		}
+		dir = app
 	}
-	return player.NewCache(filepath.Join(dir, "songs"), int64(mb)<<20)
+	limit := int64(max(s.CacheMB, 0)) << 20
+	return player.NewCache(filepath.Join(dir, "songs"), limit)
 }
 
 // applyCacheLimit gives the cache the limit the settings say.

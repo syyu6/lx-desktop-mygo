@@ -7,7 +7,9 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
+	"netease-music-mygo/internal/source"
 )
 
 // albumDetail loads an album from NetEase; tests replace it.
@@ -18,24 +20,39 @@ type albumData struct {
 	album   *netease.AlbumProfile
 	loading bool
 	err     string
+	// collected is whether the source's account has the album in its
+	// collection, asked with the album and once per account: the answer is
+	// the account's, and another account's answer is not this one's. A
+	// source that would not say is asked once too — the page is built every
+	// frame, and asking again there would be a request a frame.
+	collected      bool
+	collectedFor   int64 // the account the answer is of
+	collectedAsked bool  // the collection was read, or the read failed
+	asking         bool  // the collection is being read or written
+	collection     bool  // the collection was read: the button shows what it says
 }
 
-func (a *app) loadAlbum(id int64) {
-	d := a.albums[id]
+func (a *app) loadAlbum(src string, id int64) {
+	key := sourceKey(src, id)
+	d := a.albums[key]
 	if d == nil {
 		d = &albumData{}
-		a.albums[id] = d
+		a.albums[key] = d
 	}
 	if d.album != nil || d.loading {
 		return
 	}
 	d.loading, d.err = true, ""
+	fetch := albumDetail
+	if p := a.albumPages(src); p != nil {
+		fetch = p.Album
+	}
 	go func() {
-		al, err := albumDetail(id)
+		al, err := fetch(id)
 		a.post(func() {
 			d.loading = false
 			if err != nil {
-				d.err = "专辑加载失败"
+				d.err = a.pageError(src, "专辑加载失败", err)
 				return
 			}
 			d.album = al
@@ -43,22 +60,128 @@ func (a *app) loadAlbum(id int64) {
 	}()
 }
 
+// albumPages is a source's album pages, or nil for NetEase's, which are the
+// app's own call.
+func (a *app) albumPages(src string) source.AlbumPages {
+	if src == "" || src == music.SourceNetease || a.reg == nil {
+		return nil
+	}
+	p, ok := a.reg.Get(src)
+	if !ok {
+		return nil
+	}
+	ap, _ := p.(source.AlbumPages)
+	return ap
+}
+
 func (a *app) albumPage(c *ui.Context) {
-	id := a.route.id
-	d := a.albums[id]
-	if d.album == nil {
-		if !d.loading {
-			a.centered(c, d.err, func() { a.loadAlbum(id) })
+	src, id := a.route.src, a.route.id
+	d := a.albums[sourceKey(src, id)]
+	if d == nil || d.album == nil {
+		if d == nil || !d.loading {
+			err := ""
+			if d != nil {
+				err = d.err
+			}
+			a.centered(c, err, func() { a.loadAlbum(src, id) })
 			return
 		}
 		s := a.pageShimmer(c)
 		a.trackSkeleton(c, s, false, func(c *ui.Context) { a.playlistHeaderSkeleton(c, s) })
 		return
 	}
-	a.trackRows(c, d.album.Songs, false, func(c *ui.Context) { a.albumHeader(c, d.album) })
+	a.trackRows(c, d.album.Songs, false, func(c *ui.Context) { a.albumHeader(c, src, id, d) })
+	a.loadAlbumCollected(src, id, d)
 }
 
-func (a *app) albumHeader(c *ui.Context, al *netease.AlbumProfile) {
+// loadAlbumCollected asks the source whether the listener's account keeps
+// an album, once per account: the answer is the account's, and it changes
+// only when the listener changes it here or on their phone, which is what
+// opening the page again shows.
+func (a *app) loadAlbumCollected(src string, id int64, d *albumData) {
+	c, ok := a.collectedOf(src)
+	if !ok || d.asking {
+		return
+	}
+	prof := a.accountProfile(src)
+	if prof == nil {
+		return
+	}
+	if d.collectedAsked && d.collectedFor == prof.UserID {
+		return
+	}
+	uid := prof.UserID
+	d.asking, d.collectedAsked, d.collectedFor = true, true, uid
+	go func() {
+		kept, err := c.AlbumCollected(id)
+		a.post(func() { a.albumCollectedAnswered(src, d, uid, kept, err) })
+	}()
+}
+
+// albumCollectedAnswered takes whether the account keeps the album, or why
+// it did not say. A source that would not say leaves the button as it was:
+// 收藏专辑 is right for most albums, and clicking it says the truth.
+func (a *app) albumCollectedAnswered(src string, d *albumData, uid int64, kept bool, err error) {
+	d.asking = false
+	if p := a.accountProfile(src); p == nil || p.UserID != uid {
+		return
+	}
+	if err == nil {
+		d.collected, d.collection = kept, true
+	}
+}
+
+// toggleCollectedAlbum collects an album the listener's account does not
+// keep, or drops it from the collection: at once on the page, and then with
+// the source, which may refuse — the button goes back then, as a heart does.
+func (a *app) toggleCollectedAlbum(src string, id int64, d *albumData) {
+	c, ok := a.collectedOf(src)
+	if !ok || d.asking {
+		return
+	}
+	if !a.signedInTo(src) {
+		// The source's own code, from the dialog that names it: it is
+		// signed in where its row in the settings says.
+		a.showMain()
+		a.openLoginTo(src, "")
+		return
+	}
+	collect := !d.collected
+	uid := a.accountProfile(src).UserID
+	d.collected, d.asking = collect, true
+	go func() {
+		err := c.CollectAlbum(id, collect)
+		a.post(func() { a.albumCollectedToggled(src, d, uid, collect, err) })
+	}()
+}
+
+// albumCollectedToggled takes what the source said of the write: where it
+// refused, the button goes back to what it was.
+func (a *app) albumCollectedToggled(src string, d *albumData, uid int64, collect bool, err error) {
+	d.asking = false
+	if p := a.accountProfile(src); p == nil || p.UserID != uid {
+		return
+	}
+	if err != nil {
+		d.collected = !collect
+		a.toast = "操作失败，请稍后再试"
+		return
+	}
+	d.collectedFor = uid
+	switch {
+	case collect:
+		a.toast = "已收藏专辑"
+	default:
+		a.toast = "已取消收藏专辑"
+	}
+	// The list the album is on is the source's, and this page changed it.
+	if a.collected[src] != nil {
+		a.loadCollected(src, true)
+	}
+}
+
+func (a *app) albumHeader(c *ui.Context, src string, id int64, d *albumData) {
+	al := d.album
 	p := a.pal
 	ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 0, 26, 0).Children(func() {
 		ui.Box(c).Size(212, 212).Radius(14).Shadow(0, 18, 40, -10, p.cardShade).Children(func() {
@@ -72,7 +195,9 @@ func (a *app) albumHeader(c *ui.Context, al *netease.AlbumProfile) {
 					if i > 0 {
 						ui.Text(c, ", ")
 					}
-					a.link(c.Key(i), ar.Name, p.muted, p.text, route{page: pageArtist, id: ar.ID})
+					// The artist is the album's source's, as the album is the
+					// page's.
+					a.link(c.Key(i), ar.Name, p.muted, p.text, route{page: pageArtist, src: pageSrc(ar.Source), id: ar.ID})
 				}
 				meta := fmt.Sprintf(" · %d 首", len(al.Songs))
 				if al.PublishTime > 0 {
@@ -81,7 +206,7 @@ func (a *app) albumHeader(c *ui.Context, al *netease.AlbumProfile) {
 				ui.Text(c, meta)
 			})
 			if d := strings.TrimSpace(al.Description); d != "" {
-				ui.Text(c, strings.ReplaceAll(d, "\n", " ")).FontSize(12.5).TextColor(p.muted).MaxLines(2).LineHeight(1.45).Margin(2, 0, 0, 0)
+				a.collectionDescription(c, d)
 			}
 			ui.Row(c).Gap(10).Margin(10, 0, 0, 0).Children(func() {
 				if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
@@ -92,6 +217,18 @@ func (a *app) albumHeader(c *ui.Context, al *netease.AlbumProfile) {
 				}
 				if a.downloadEnabled() && len(al.Songs) > 0 {
 					a.trkDownloadButton(c, al.Songs)
+				}
+				// Collecting an album is a source's own list, and only a
+				// source that keeps one has the button: NetEase's albums
+				// are saved as playlists, elsewhere.
+				if _, ok := a.collectedOf(src); ok {
+					icon, label := iconPlus, "收藏专辑"
+					if d.collected {
+						icon, label = iconCheck, "已收藏"
+					}
+					if pillButton(c.Key("collect"), icon, label, p.hover.Over(p.bg), p.text).Clicked() {
+						a.toggleCollectedAlbum(src, id, d)
+					}
 				}
 			})
 		})
@@ -135,6 +272,8 @@ func (a *app) albumCard(c *ui.Context, al *netease.AlbumProfile) {
 		ui.Text(c, strings.Join(meta, " · ")).FontSize(12).TextColor(p.muted).SingleLine().Margin(-6, 0, 0, 0)
 	})
 	if card.Clicked() {
-		a.open(route{page: pageAlbum, id: al.ID})
+		// The album's page is the one of the source it came from: a card
+		// drawn on an artist's page opens the same source as that page.
+		a.open(route{page: pageAlbum, src: pageSrc(a.route.src), id: al.ID})
 	}
 }

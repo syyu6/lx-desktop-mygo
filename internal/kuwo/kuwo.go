@@ -19,12 +19,13 @@ import (
 	"time"
 
 	"netease-music-mygo/internal/music"
+	"netease-music-mygo/internal/network"
 )
 
 // UserAgent is what Kuwo's clients send, which its servers expect.
 const UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
-var httpClient = &http.Client{Timeout: 20 * time.Second}
+var httpClient = network.Client(20 * time.Second)
 
 // Provider is Kuwo as package source asks it.
 type Provider struct{}

@@ -30,6 +30,9 @@ const (
 type Artist struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
+	// Source is the id of the source they are of, which their page is
+	// opened on: empty is NetEase's, as the app's own answers leave it.
+	Source string `json:"-"`
 }
 
 // Album is what a song is in.
@@ -37,6 +40,8 @@ type Album struct {
 	ID     int64  `json:"id"`
 	Name   string `json:"name"`
 	PicURL string `json:"picUrl"`
+	// Source is the id of the source it is of: empty is NetEase's.
+	Source string `json:"-"`
 }
 
 // Track is a song, a podcast's episode, or anything else that plays, as

@@ -13,8 +13,12 @@ import (
 // Scripts run one at a time, each in an Engine of its own, made the first
 // time it is asked something and kept while it is used: a runtime takes a
 // moment to start, and a script is imported to be asked for many songs.
-// A script that hangs is marked broken, and is not asked again until it is
-// imported again.
+// A script whose call hung, or which would not start, is let go of and
+// asked again after a while (downFor): a source that is slow for a minute,
+// as one retrying an upstream is, must not take the listener's only source
+// with it for the rest of the session. The wait grows with each failure, so
+// a script that hangs on every song costs one song's wait, not every
+// song's.
 //
 // A runtime costs its script's heap, which is the megabytes QuickJS holds
 // for the script's own objects, so the ones not asked for a while are let
@@ -31,9 +35,14 @@ type Resolver struct {
 	engines map[string]*Engine
 	// used is when each engine was last asked something, by ID, which the
 	// idle sweep reads.
-	used   map[string]time.Time
-	broken map[string]bool
-	closed bool
+	used map[string]time.Time
+	// down is when a script that failed may be asked again, by ID, and
+	// failures how many times it has failed in a row: a source that is
+	// briefly unwell is asked again, and one that never answers waits
+	// longer each time.
+	down     map[string]time.Time
+	failures map[string]int
+	closed   bool
 	// starting holds the scripts being started, so that two requests at
 	// once wait for one runtime rather than making two.
 	starting map[string]chan struct{}
@@ -46,10 +55,20 @@ func NewResolver(store *Store) *Resolver {
 		store:    store,
 		engines:  map[string]*Engine{},
 		used:     map[string]time.Time{},
-		broken:   map[string]bool{},
+		down:     map[string]time.Time{},
+		failures: map[string]int{},
 		starting: map[string]chan struct{}{},
 	}
 }
+
+// The wait after a script failed grows with each failure in a row, from
+// downFor to downMax: a source that stumbles once is back for the next
+// song, and one that never answers costs a song a minute rather than every
+// song forever.
+const (
+	downFor = 15 * time.Second
+	downMax = 5 * time.Minute
+)
 
 // ErrNoSource is returned when no script can answer.
 var ErrNoSource = errors.New("没有音源能提供这首歌")
@@ -62,9 +81,14 @@ func (r *Resolver) engine(id string) (*Engine, error) {
 			r.mu.Unlock()
 			return nil, ErrClosed
 		}
-		if r.broken[id] {
-			r.mu.Unlock()
-			return nil, ErrHung
+		if until, ok := r.down[id]; ok {
+			if time.Now().Before(until) {
+				r.mu.Unlock()
+				return nil, ErrHung
+			}
+			// Its wait is over: it is asked again, and the failures so far
+			// are what the next wait is measured from.
+			delete(r.down, id)
 		}
 		if e, ok := r.engines[id]; ok {
 			r.used[id] = time.Now()
@@ -87,7 +111,7 @@ func (r *Resolver) engine(id string) (*Engine, error) {
 		r.mu.Lock()
 		delete(r.starting, id)
 		if err != nil {
-			r.broken[id] = true
+			r.coolDownLocked(id)
 		} else {
 			r.engines[id] = e
 			r.used[id] = time.Now()
@@ -132,16 +156,45 @@ func (r *Resolver) scriptFor(source Source, action Action) (string, *Engine, err
 	return "", nil, ErrNoSource
 }
 
-// failed notes that a script hung, so that it is not asked again: the
-// runtime of a script in an endless loop cannot be stopped, and is left to
-// the engine that owns it.
+// failed notes that a script's call hung, and lets go of its runtime: the
+// engine is marked broken by the call that timed out, and its runtime is
+// left to the goroutine that owns it. The script is asked again after a
+// while (coolDownLocked), since a source that is slow for a minute is not
+// one the app should give up on for the session — a listener whose only
+// script is like that would hear nothing.
 func (r *Resolver) failed(id string, err error) {
 	if !errors.Is(err, ErrHung) {
 		return
 	}
 	r.mu.Lock()
-	r.broken[id] = true
+	r.coolDownLocked(id)
 	delete(r.used, id)
+	r.mu.Unlock()
+}
+
+// coolDownLocked notes a failure of the script id, and keeps it from being
+// asked until its wait is over. The wait doubles with each failure in a
+// row, up to downMax, and a script that answers resets it.
+func (r *Resolver) coolDownLocked(id string) {
+	n := r.failures[id] + 1
+	r.failures[id] = n
+	wait := downFor << min(n-1, 8)
+	if wait > downMax {
+		wait = downMax
+	}
+	r.down[id] = time.Now().Add(wait)
+}
+
+// answered notes that the script id served a stream: a script that stumbled
+// once and then works is asked first again, with no wait.
+//
+// Only a stream resets the wait. A script that hangs on streams but answers
+// a song's words would otherwise clear its wait on every song, and the song
+// after it would hang for its whole call timeout again.
+func (r *Resolver) answered(id string) {
+	r.mu.Lock()
+	delete(r.failures, id)
+	delete(r.down, id)
 	r.mu.Unlock()
 }
 
@@ -186,20 +239,51 @@ func (r *Resolver) Stream(t Track, quality Quality) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	url, err := e.StreamURL(t, quality)
+	url, err := e.streamDown(t, quality)
 	if err != nil {
-		// A script that cannot serve the quality asked may serve a lower
-		// one: what a source offers for a song is not always what the
-		// settings ask for.
-		if lower := below(quality); lower != quality {
-			if url, lerr := e.StreamURL(t, lower); lerr == nil {
-				return url, nil
-			}
-		}
 		r.failed(id, err)
 		return "", err
 	}
+	r.answered(id)
 	return url, nil
+}
+
+// streamDown asks the engine for t at quality, and at each quality under it
+// until one answers: a source offers a song at some levels and not others,
+// and QQ Music's is at the lowest while its hires and lossless are empty.
+// One step down is not enough for that — it lands on the next empty one —
+// so the ladder is walked to its foot before the song is given up.
+//
+// A call that hung ends the walk. Its answer says nothing about the quality
+// asked, and each rung is another callTimeout of the listener's wait: a
+// script that will not answer is left for dead rather than asked five
+// times.
+//
+// The error of the quality asked for is the one returned: the levels below
+// it were the app's guesses, and it is the one the listener asked for that
+// says why.
+func (e *Engine) streamDown(t Track, quality Quality) (string, error) {
+	url, err := e.StreamURL(t, quality)
+	if err == nil {
+		return url, nil
+	}
+	// The quality asked for is the one whose error is returned: the levels
+	// below it were the app's guesses, and only it says what the listener
+	// wanted. A script that stopped answering is the exception: that is
+	// what the resolver must hear, to wait before asking it again.
+	first := err
+	if !errors.Is(err, ErrHung) {
+		for lower := below(quality); lower != quality; lower = below(lower) {
+			if url, err = e.StreamURL(t, lower); err == nil {
+				return url, nil
+			}
+			if errors.Is(err, ErrHung) {
+				return "", err
+			}
+			quality = lower
+		}
+	}
+	return "", first
 }
 
 // below returns the quality under q, or q for the lowest.
@@ -235,18 +319,12 @@ func (r *Resolver) StreamWith(id string, t Track, quality Quality) (string, erro
 	if c, ok := e.Capabilities()[t.Source]; !ok || !c.Has(ActionMusicURL) {
 		return "", ErrNoSource
 	}
-	url, err := e.StreamURL(t, quality)
+	url, err := e.streamDown(t, quality)
 	if err != nil {
-		// What a source offers for a song is not always what the settings
-		// ask for: a lower one may come.
-		if lower := below(quality); lower != quality {
-			if url, lerr := e.StreamURL(t, lower); lerr == nil {
-				return url, nil
-			}
-		}
 		r.failed(id, err)
 		return "", err
 	}
+	r.answered(id)
 	return url, nil
 }
 
@@ -322,13 +400,16 @@ func (r *Resolver) Close() {
 	}
 }
 
-// Reset drops the engines of a script, as after it was imported again.
+// Reset drops the engines of a script, as after it was imported again: a
+// new import is a new script, which is asked at once rather than made to
+// wait out the old one's failures.
 func (r *Resolver) Reset(id string) {
 	r.mu.Lock()
 	e, ok := r.engines[id]
 	delete(r.engines, id)
 	delete(r.used, id)
-	delete(r.broken, id)
+	delete(r.down, id)
+	delete(r.failures, id)
 	r.mu.Unlock()
 	if ok {
 		e.Close()

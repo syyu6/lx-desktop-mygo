@@ -190,12 +190,12 @@ func init() {
 				step(0, func() { a.nowPlaying, a.npPane = true, paneLyrics })
 				time.Sleep(3 * time.Second)
 				shot("a-np", a.win)
-				step(0, func() { a.openArtist(a.pl.Current().Artists[0].ID) })
+				step(0, func() { a.openArtist(a.pl.Current().Artists[0].Source, a.pl.Current().Artists[0].ID) })
 				time.Sleep(150 * time.Millisecond)
 				shot("a-loading", a.win)
 				time.Sleep(4 * time.Second)
 				shot("a-artist", a.win)
-				step(0, func() { a.artistTab = artistLatest; a.loadLatest(a.route.id) })
+				step(0, func() { a.artistTab = artistLatest; a.loadLatest(a.route.src, a.route.id) })
 				time.Sleep(3 * time.Second)
 				shot("a-latest", a.win)
 				mygo.RunOnMain(mygo.App.Quit)
@@ -236,11 +236,11 @@ func init() {
 			step(0, func() { a.open(route{page: pageCharts}) })
 			time.Sleep(time.Second)
 			shot("2-charts", a.win)
-			step(0, func() { a.open(route{page: pagePlaylist, id: a.charts[1].ID}) })
+			step(0, func() { a.open(route{page: pagePlaylist, id: a.home(a.homeSource()).charts[1].ID}) })
 			time.Sleep(4 * time.Second)
 			shot("3-playlist", a.win)
 			step(0, func() {
-				pl := a.playlists[playlistKey("", a.charts[1].ID)]
+				pl := a.playlists[playlistKey("", a.home(a.homeSource()).charts[1].ID)]
 				a.volume = 0.15
 				a.pl.SetVolume(a.volume)
 				a.pl.PlayQueue(pl.Tracks, firstPlayable(pl.Tracks))

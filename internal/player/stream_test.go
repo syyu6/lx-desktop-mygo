@@ -1,6 +1,7 @@
 package player
 
 import (
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -224,6 +225,57 @@ func TestStreamIntoCache(t *testing.T) {
 	}
 	if _, _, ok := c.lookup("2", "exhigh"); ok {
 		t.Error("kept a song cut short")
+	}
+}
+
+// A source that takes the request and then sends nothing ends the song's
+// download rather than leaving it at 「正在缓冲」: the player may then give
+// the song's next link its turn. A source that has started answering is not
+// cut off for being slow — a song is minutes long.
+func TestDownloadGivesUpOnASourceThatSaysNothing(t *testing.T) {
+	stall := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-stall
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(stall) })
+	old := firstByte
+	firstByte = 150 * time.Millisecond
+	defer func() { firstByte = old }()
+
+	d := startDownload(srv.URL, 1000, nil, nil)
+	defer d.Close()
+	start := time.Now()
+	if n := d.waitFor(1); n != 0 {
+		t.Fatalf("got %d bytes from a source that sent none", n)
+	}
+	d.mu.Lock()
+	err := d.err
+	d.mu.Unlock()
+	if !errors.Is(err, errCold) {
+		t.Errorf("ended with %v, want the cold source's", err)
+	}
+	if since := time.Since(start); since > 5*time.Second {
+		t.Errorf("waited %v", since)
+	}
+
+	// Slow is not cold: the first bytes came, so the rest may take as long
+	// as the song needs.
+	b := testMP3(t)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(b[:1024])
+		w.(http.Flusher).Flush()
+		time.Sleep(300 * time.Millisecond)
+		w.Write(b[1024:])
+	}))
+	t.Cleanup(slow.Close)
+	d2 := startDownload(slow.URL, int64(len(b)), nil, nil)
+	defer d2.Close()
+	if n := d2.waitFor(int64(len(b))); n != int64(len(b)) {
+		t.Errorf("got %d of %d bytes", n, len(b))
 	}
 }
 

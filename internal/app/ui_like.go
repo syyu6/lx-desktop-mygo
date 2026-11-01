@@ -2,26 +2,51 @@ package app
 
 import (
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
 	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
+	"netease-music-mygo/internal/source"
 )
 
 // likes are the songs and episodes the listener likes, which hearts show
-// filled.
+// filled. A song is liked in the source it is from: NetEase keeps the list
+// it was added to, and QQ Music its own 我喜欢.
 
-// These like or unlike a song or an episode with NetEase, and ask which
-// episodes the listener likes; tests replace them.
+// These like or unlike a song with NetEase, and ask which episodes the
+// listener likes; tests replace them. A song of a source that streams is
+// liked through that source's Library.
 var (
 	likeSong      = netease.Like
 	likeProgram   = netease.LikeProgram
 	programsLiked = netease.ProgramsLiked
 )
 
-// loadLiked loads the listener's liked songs.
+// liker is a source that keeps the songs its listener likes, with the
+// account that source is signed in to.
+func (a *app) liker(src string) (source.Library, bool) {
+	if src == "" || src == music.SourceNetease {
+		// NetEase's list is what likeSong writes, and loadLiked reads.
+		return nil, false
+	}
+	if a.reg == nil {
+		return nil, false
+	}
+	p, ok := a.reg.Get(src)
+	if !ok {
+		return nil, false
+	}
+	l, ok := p.(source.Library)
+	return l, ok
+}
+
+// loadLiked loads the liked songs of every source the listener is signed
+// in to, each into its own keys: a song's Ident names its source, so two
+// sources numbering a song alike are two songs.
 func (a *app) loadLiked(uid int64) {
 	go func() {
 		ids, err := netease.LikedIDs(uid)
@@ -29,43 +54,95 @@ func (a *app) loadLiked(uid int64) {
 			if err != nil || a.profile == nil || a.profile.UserID != uid {
 				return
 			}
-			a.liked = make(map[int64]bool, len(ids))
+			for k := range a.liked {
+				if strings.HasPrefix(k, music.SourceNetease+"/") {
+					delete(a.liked, k)
+				}
+			}
 			for _, id := range ids {
-				a.liked[id] = true
+				a.liked[music.SourceNetease+"/"+strconv.FormatInt(id, 10)] = true
+			}
+		})
+	}()
+}
+
+// loadLikedOf loads what the listener likes on another source, once its
+// account is signed in. Its songs are named by their mid there, which the
+// source gives by number; the list is told by numbers otherwise.
+func (a *app) loadLikedOf(src string, uid int64) {
+	l, ok := a.liker(src)
+	if !ok {
+		return
+	}
+	go func() {
+		ids, err := l.LikedIDs(uid)
+		a.post(func() {
+			if err != nil {
+				return
+			}
+			// The source's songs are named by mid, and LikedIDs answers
+			// with numbers: a heart of a song not seen since is filled in
+			// when the song is drawn, from the numbers kept here.
+			for k := range a.liked {
+				if strings.HasPrefix(k, src+"/") {
+					delete(a.liked, k)
+				}
+			}
+			for _, id := range ids {
+				a.liked[src+"/"+strconv.FormatInt(id, 10)] = true
 			}
 		})
 	}()
 }
 
 // toggleLike likes a song or an episode, or unlikes it, at once in the app
-// and then with NetEase, which may refuse: the heart goes back then. Signed
-// out, it asks the listener to sign in.
+// and then with its source, which may refuse: the heart goes back then.
+// Signed out, it asks the listener to sign in.
 func (a *app) toggleLike(tr *netease.Track) {
-	// What the listener likes is NetEase's: another source's songs have no
-	// list of theirs to be in.
-	if tr.Src() != music.SourceNetease {
-		a.toast = "其它来源的歌曲不能加入喜欢的音乐"
-		return
-	}
-	if a.profile == nil {
-		a.showMain()
-		a.openLogin()
-		return
-	}
 	if tr.ProgramID != 0 {
+		if a.profile == nil {
+			a.showMain()
+			a.openLogin()
+			return
+		}
 		a.toggleProgramLike(tr.ProgramID)
 		return
 	}
-	if a.liked == nil {
-		a.liked = map[int64]bool{}
+	src := tr.Src()
+	l, other := a.liker(src)
+	if src == music.SourceNetease {
+		if !a.signedInTo(src) {
+			a.showMain()
+			a.openLogin()
+			return
+		}
+	} else if !other {
+		// A source that keeps no such list of its own: the heart is the
+		// app's alone, and says why it cannot go anywhere.
+		a.toast = a.sourceShortName(src) + "没有可同步的喜欢列表"
+		return
+	} else if !a.signedInTo(src) {
+		// The source's own code, from the dialog that names it: it is
+		// signed in where its row in the settings says.
+		a.showMain()
+		a.openLoginTo(src, "")
+		return
 	}
-	id, like := tr.ID, !a.liked[tr.ID]
-	a.setLiked(id, like)
+	if a.liked == nil {
+		a.liked = map[string]bool{}
+	}
+	key, like := tr.Ident(), !a.liked[tr.Ident()]
+	a.setLiked(key, like)
 	go func() {
-		err := likeSong(id, like)
+		var err error
+		if src == music.SourceNetease {
+			err = likeSong(tr.ID, like)
+		} else {
+			err = l.Like(tr.ID, like)
+		}
 		a.post(func() {
 			if err != nil {
-				a.setLiked(id, !like)
+				a.setLiked(key, !like)
 				a.toast = "操作失败，请稍后再试"
 				return
 			}
@@ -101,7 +178,15 @@ func (a *app) isLiked(tr *netease.Track) bool {
 	if tr.ProgramID != 0 {
 		return a.likedPrograms[tr.ProgramID]
 	}
-	return a.liked[tr.ID]
+	return a.isLikedKey(tr)
+}
+
+// isLikedKey is isLiked for a song. Both of the app's sources list the
+// songs a listener likes by number, not by the key a song has there, so a
+// song is known either by its Ident — once a like or an unlike named it —
+// or by the number its source listed.
+func (a *app) isLikedKey(tr *netease.Track) bool {
+	return a.liked[tr.Ident()] || a.liked[tr.Src()+"/"+strconv.FormatInt(tr.ID, 10)]
 }
 
 // likeCurrent likes the song or episode playing, or unlikes it, from the
@@ -112,25 +197,36 @@ func (a *app) likeCurrent() {
 		return
 	}
 	a.toggleLike(tr)
-	switch {
-	case tr.Src() != music.SourceNetease:
-		return // said so
-	case a.profile == nil:
-		return // asked to sign in
-	case !a.isLiked(tr):
+	if tr.ProgramID != 0 {
+		if !a.isLiked(tr) {
+			a.toast = "已取消喜欢"
+		} else {
+			a.toast = "已喜欢这期节目"
+		}
+		return
+	}
+	if !a.signedInTo(tr.Src()) {
+		return // asked to sign in, or said so
+	}
+	if a.isLiked(tr) {
+		if tr.Src() == music.SourceNetease {
+			a.toast = "已添加到我喜欢的音乐"
+		} else {
+			a.toast = "已添加到我的喜欢"
+		}
+	} else {
 		a.toast = "已取消喜欢"
-	case tr.ProgramID != 0:
-		a.toast = "已喜欢这期节目"
-	default:
-		a.toast = "已添加到我喜欢的音乐"
 	}
 }
 
-func (a *app) setLiked(id int64, like bool) {
+func (a *app) setLiked(key string, like bool) {
+	if a.liked == nil {
+		a.liked = map[string]bool{}
+	}
 	if like {
-		a.liked[id] = true
+		a.liked[key] = true
 	} else {
-		delete(a.liked, id)
+		delete(a.liked, key)
 	}
 }
 
@@ -191,10 +287,6 @@ func (a *app) programLikesAnswered(uid int64, asked []int64, liked map[int64]boo
 // pops it in on a spring while a ring swells around it and confetti flies
 // out; unliking lets it give a little.
 func (a *app) likeButton(c *ui.Context, tr *netease.Track, size float32, color ui.Color) ui.Element {
-	// Another source's song has no heart: it is not NetEase's to like.
-	if tr.Src() != music.SourceNetease {
-		return ui.Box(c)
-	}
 	if tr.ProgramID != 0 {
 		a.askProgramLikes([]int64{tr.ProgramID})
 	}

@@ -20,7 +20,7 @@ func TestArtistNameOpensTheirPage(t *testing.T) {
 	duet := netease.Track{ID: 1, Name: "广寒宫", Artists: []netease.Artist{{ID: 11, Name: "甲"}, {ID: 12, Name: "乙"}}, Duration: 200000}
 	a.pl.Cue([]netease.Track{duet})
 	a.pl.SetLyrics(nil)
-	a.artists[12] = &artistData{profile: &netease.ArtistProfile{
+	a.artists["netease/12"] = &artistData{profile: &netease.ArtistProfile{
 		Artist: netease.Artist{ID: 12, Name: "乙"},
 		Songs:  []netease.Track{{ID: 2, Name: "起风了", Artists: []netease.Artist{{ID: 13, Name: "丙"}}, Duration: 200000}},
 	}}
@@ -72,7 +72,7 @@ func TestArtistSongsByLatest(t *testing.T) {
 		return netease.Track{ID: id, Name: name, Artists: []netease.Artist{{ID: 12, Name: "乙"}}, Duration: 200000}
 	}
 	d := &artistData{profile: &netease.ArtistProfile{Artist: netease.Artist{ID: 12, Name: "乙"}, Songs: []netease.Track{song(1, "老歌")}}}
-	a.artists[12] = d
+	a.artists["netease/12"] = d
 	a.open(route{page: pageArtist, id: 12})
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()

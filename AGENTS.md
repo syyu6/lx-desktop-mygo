@@ -23,6 +23,7 @@ Only write a test for behaviour that can actually break. If the code under test 
 - Build views with `ui.NewTester` and set up the app with `newTestApp` (in `internal/app/helpers_test.go`). Find elements by their accessibility label, then `Click`, `RightClick`, `Press`/`Move`/`Release` or `Key`, and check the app's state afterwards.
 - The menus are drawn in the window, so their items are elements: open one with `Click` on its button or `RightClick` on a row, then `Click` the item. `tt.Menu` and `tt.ChooseMenuItem` only see the system's menus, of which the app has none.
 - Swap out the network and the clipboard through package variables such as `likeSong` and `copyText`, and restore the real one with `defer`.
+- `a.post` drops its work when the app has no window, which is every `ui.NewTester` test: a page's answer is fed to its `…Answered` function directly (`purchasedAnswered`, `collectedAnswered`, `albumCollectedAnswered`, `albumCollectedToggled`, `homeArrived`), and a test that has to see what a page asked polls the fake with `waitFor`. A source's fake keeps what it was asked behind a mutex, since the page asks on its own goroutine.
 - Live tests that call NetEase skip unless `LIVE` is set.
 - Look at visuals instead of asserting on them. The `NM_FRAMES` tests save PNGs into that directory and skip when it isn't set. Check pixels only for coverage, such as whether a layer still covers the window.
 - Start each test with a one-sentence comment saying the behaviour it checks, in the style of the code.

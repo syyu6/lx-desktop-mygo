@@ -343,9 +343,9 @@ func TestSidebarFootHoldsTheAccountAndTheSettings(t *testing.T) {
 	}
 }
 
-// A listener who is signed in finds their own page, the settings and signing
-// out behind their picture at the foot of the sidebar, which names them
-// without taking the room a name would.
+// A listener who is signed in finds their own page and signing out behind
+// their picture at the foot of the sidebar, which names them without taking
+// the room a name would, and the settings beside it.
 func TestThePictureOpensTheAccountMenu(t *testing.T) {
 	a := chainTestApp(t)
 	a.art = newArtCache(func(func()) {})
@@ -363,13 +363,15 @@ func TestThePictureOpensTheAccountMenu(t *testing.T) {
 		t.Fatalf("the picture: %v", err)
 	}
 	tt.Frame()
-	for _, item := range []string{"我的主页", "设置…", "退出登录"} {
+	// One row per source: who is signed in to it, and the ones that are not
+	// with their way in. NetEase is signed in, QQ Music is not.
+	for _, item := range []string{"小明", "登录QQ 音乐", "设置…", "退出网易云"} {
 		if _, ok := tt.Find(item); !ok {
 			t.Errorf("the account menu has no %q", item)
 		}
 	}
 	// Signing out takes the menu with it, and the way in is back.
-	if err := tt.Click("退出登录"); err != nil {
+	if err := tt.Click("退出网易云"); err != nil {
 		t.Fatalf("signing out: %v", err)
 	}
 	tt.Frame()

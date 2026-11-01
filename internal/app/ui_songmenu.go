@@ -44,21 +44,21 @@ func (a *app) songItems(tr *netease.Track, pid int64) func(m *ui.Menu) {
 				copyText(link)
 			}
 		}
-		// Its artists' and album's pages, those NetEase has.
-		linked := tr.Album.ID != 0
+		// Its artists' and album's pages, those their sources have.
+		linked := tr.Album.ID != 0 && a.hasAlbumPages(albumSrc(tr))
 		for _, ar := range tr.Artists {
-			linked = linked || ar.ID != 0
+			linked = linked || ar.ID != 0 && a.hasArtistPages(artistSrc(tr, ar))
 		}
 		if linked {
 			m.Separator()
 		}
 		for _, ar := range tr.Artists {
-			if ar.ID != 0 && m.Item("查看歌手："+ar.Name).Chosen() {
-				a.openArtist(ar.ID)
+			if ar.ID != 0 && a.hasArtistPages(artistSrc(tr, ar)) && m.Item("查看歌手："+ar.Name).Chosen() {
+				a.openArtist(artistSrc(tr, ar), ar.ID)
 			}
 		}
-		if tr.Album.ID != 0 && m.Item("查看专辑："+tr.Album.Name).Chosen() {
-			a.openPage(route{page: pageAlbum, id: tr.Album.ID})
+		if tr.Album.ID != 0 && a.hasAlbumPages(albumSrc(tr)) && m.Item("查看专辑："+tr.Album.Name).Chosen() {
+			a.openPage(route{page: pageAlbum, src: pageSrc(albumSrc(tr)), id: tr.Album.ID})
 		}
 		// Downloads, once the listener turned them on: one song is asked
 		// its quality, as an album or a playlist is asked for the whole

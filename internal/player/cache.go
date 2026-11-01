@@ -35,6 +35,15 @@ func NewCache(dir string, limit int64) *Cache {
 	return &Cache{dir: dir, limit: limit}
 }
 
+// Directory is where the cache keeps its songs: what the settings show, and
+// what a migration copies from.
+func (c *Cache) Directory() string {
+	if c == nil {
+		return ""
+	}
+	return c.dir
+}
+
 // SetLimit changes how much the cache may take, and drops what is over.
 func (c *Cache) SetLimit(limit int64) {
 	c.mu.Lock()
@@ -352,12 +361,15 @@ func (c *Cache) prune(keep string) {
 }
 
 // dropParts removes the files of songs that never all came in, left by an
-// app that quit as they came: one coming in is written to every moment.
+// app that quit as they came: one coming in is written to every moment. The
+// copies of a migration that did not finish go the same way.
 func (c *Cache) dropParts() {
-	parts, _ := filepath.Glob(filepath.Join(c.dir, "*.part"))
-	for _, path := range parts {
-		if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) > time.Hour {
-			os.Remove(path)
+	for _, pattern := range []string{"*.part", ".migrate-*", ".write-check-*"} {
+		stale, _ := filepath.Glob(filepath.Join(c.dir, pattern))
+		for _, path := range stale {
+			if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) > time.Hour {
+				os.Remove(path)
+			}
 		}
 	}
 }

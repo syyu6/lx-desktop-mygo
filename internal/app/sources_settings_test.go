@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -74,7 +75,57 @@ func TestSettingsTurnSourcesOff(t *testing.T) {
 	}
 }
 
-// A source's lyrics switch is its own: a source kept for its words alone
+// The pages a source may appear in are that source's own switches: opened,
+// its row carries 功能 — 曲库、单曲、歌词、评论 — and 页面 — the pages it
+// can serve — under its name, rather than a group of its own at the foot of
+// the page. NetEase is signed in to, so its row says so without opening.
+func TestSettingsShowPagesAmongTheSourcesSwitches(t *testing.T) {
+	a := testAppWithSources(t, testSource)
+	a.settings = defaultSettings()
+	a.loadRegistry()
+	openSettingsTab(a, settingsSources)
+	tt := ui.NewTester(a.settingsView, settingsWidth, 2400)
+	tt.Frame()
+	// The group of its own is gone.
+	if tt.HasText("多来源页面") {
+		t.Error("the page tabs still have a group of their own")
+	}
+	// NetEase's row is open by default: its functions and its pages are
+	// both there, as two labelled rows.
+	for _, want := range []string{"功能", "页面", "网易云音乐 · 曲库", "网易云音乐 · 推荐", "网易云音乐 · 排行榜", "网易云音乐 · 歌单"} {
+		if _, ok := tt.Find(want); !ok {
+			t.Errorf("the settings do not show %q", want)
+		}
+	}
+	// NetEase is signed in to in this app, and its row says so; a source
+	// with no sign-in at all offers no state to be in.
+	if tt.HasText("已登录") {
+		t.Error("a test app with no account says it is signed in")
+	}
+	// Cool's row is closed, and a closed row still says it has no account.
+	// (Kugou has a catalogue alone and offers no pages at all.)
+	for _, page := range []tabPage{tabsHome, tabsCharts, tabsSonglists} {
+		if !a.pageOn(page, music.SourceNetease) {
+			t.Fatalf("%v starts turned off for NetEase", page)
+		}
+	}
+	// Turning a page off for a source is kept, and leaves the others'.
+	a.setPageAsk(tabsCharts, music.SourceNetease, false)
+	if a.pageOn(tabsCharts, music.SourceNetease) {
+		t.Error("the charts still show NetEase")
+	}
+	if !a.pageOn(tabsHome, music.SourceNetease) || !a.pageOn(tabsSonglists, music.SourceNetease) {
+		t.Error("turning one page off for a source took another's")
+	}
+	if !slices.Contains(a.settings.PagesAskOff, pageKey(tabsCharts, music.SourceNetease)) {
+		t.Errorf("the settings keep %q off", a.settings.PagesAskOff)
+	}
+	a.setPageAsk(tabsCharts, music.SourceNetease, true)
+	if !a.pageOn(tabsCharts, music.SourceNetease) || len(a.settings.PagesAskOff) != 0 {
+		t.Errorf("turned on: on %v, off %q", a.pageOn(tabsCharts, music.SourceNetease), a.settings.PagesAskOff)
+	}
+}
+
 // is not searched, and one searched may be left out of the words.
 func TestSettingsTurnLyricsOff(t *testing.T) {
 	a := testAppWithSources(t, testSource)

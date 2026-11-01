@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"netease-music-mygo/internal/music"
+	"netease-music-mygo/internal/network"
 )
 
 // UserAgent is what Migu's Android client sends, which its servers expect.
@@ -38,7 +39,7 @@ const (
 	uiVersion = "A_music_3.6.1"
 )
 
-var httpClient = &http.Client{Timeout: 20 * time.Second}
+var httpClient = network.Client(20 * time.Second)
 
 // Provider is Migu Music as package source asks it.
 type Provider struct{}

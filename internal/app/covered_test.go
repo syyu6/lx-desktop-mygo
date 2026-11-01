@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/music"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -20,8 +21,10 @@ func TestCoveredPageKeepsItsPlace(t *testing.T) {
 		tracks[i] = netease.Track{ID: int64(i + 1), Name: fmt.Sprintf("曲目%d", i+1)}
 	}
 	a.playlists[playlistKey("", 42)] = &netease.Playlist{ID: 42, Name: "飙升榜", Tracks: tracks}
+	h := a.home(music.SourceNetease)
+	h.at = time.Now()
 	for i := range 40 {
-		a.charts = append(a.charts, netease.Playlist{ID: int64(100 + i), Name: fmt.Sprintf("榜单%d", i+1)})
+		h.charts = append(h.charts, netease.Playlist{ID: int64(100 + i), Name: fmt.Sprintf("榜单%d", i+1)})
 	}
 	a.pl.Cue([]netease.Track{{ID: 9999, Name: "一张相片"}})
 	tt := ui.NewTester(a.view, 1200, 800)

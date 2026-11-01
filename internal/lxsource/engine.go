@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"modernc.org/quickjs"
+
+	"netease-music-mygo/internal/network"
 )
 
 // An Engine runs one script.
@@ -135,7 +137,7 @@ func newEngine(script string) (*Engine, error) {
 
 	e := &Engine{
 		vm:      vm,
-		http:    &http.Client{Timeout: requestTimeout},
+		http:    network.Client(requestTimeout),
 		jobs:    make(chan func(), 32),
 		closed:  make(chan struct{}),
 		stopped: make(chan struct{}),
